@@ -51,7 +51,7 @@
     font-family:var(--sans);font-size:14px;
     padding:20px;
   }
-  .wrap{max-width:1400px;margin:0 auto;}
+  .wrap{max-width:100%;margin:0 auto;}
 
   /* Header */
   header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:16px;flex-wrap:wrap;}
@@ -297,6 +297,12 @@
   .dim-head{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-bottom:6px;font-family:var(--sans);}
   .dim-head b{color:var(--text);font-family:var(--mono);font-size:13px;}
   .metrics-line{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:8px;line-height:1.7;}
+  .report-fullscreen{
+    position:fixed !important; top:0; left:0; right:0; bottom:0;
+    width:100vw !important; height:100vh !important; min-height:0 !important;
+    z-index:9999; border-radius:0 !important; font-size:15px !important;
+    padding:32px !important; resize:none !important;
+  }
 </style>
 </head>
 <body>
@@ -393,13 +399,13 @@
       <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;margin-top:10px;min-width:640px;">
         <thead><tr style="text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;">
-          <th style="padding:6px 8px;">代码 Ticker</th>
-          <th style="padding:6px 8px;">操作建议 Action</th>
-          <th style="padding:6px 8px;">置信度 Confidence</th>
-          <th style="padding:6px 8px;">个股评分</th>
-          <th style="padding:6px 8px;">R倍数</th>
-          <th style="padding:6px 8px;">持仓天数</th>
-          <th style="padding:6px 8px;">组合权重</th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','ticker',()=>renderDashboardTable())">代码 Ticker<span class="sa-dashAi" data-key="ticker"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','action',()=>renderDashboardTable())">操作建议 Action<span class="sa-dashAi" data-key="action"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','confidence',()=>renderDashboardTable())">置信度 Confidence<span class="sa-dashAi" data-key="confidence"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','composite',()=>renderDashboardTable())">个股评分<span class="sa-dashAi" data-key="composite"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','rMultiple',()=>renderDashboardTable())">R倍数<span class="sa-dashAi" data-key="rMultiple"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','holdDays',()=>renderDashboardTable())">持仓天数<span class="sa-dashAi" data-key="holdDays"></span></th>
+          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','weight',()=>renderDashboardTable())">组合权重<span class="sa-dashAi" data-key="weight"></span></th>
         </tr></thead>
         <tbody id="dashAiBody"></tbody>
       </table>
@@ -417,6 +423,7 @@
         <button class="primary small" onclick="generateReport('evening')">🌆 生成晚报 Evening Report</button>
         <button class="ghost small" onclick="copyReportToClipboard()">📋 复制 Copy</button>
         <button class="ghost small" onclick="runWithButtonLoading(this,'发送中',sendReportToDiscord)">📨 发送到Discord Send to Discord</button>
+        <button class="ghost small" id="dashReportFullscreenBtn" onclick="toggleReportFullscreen()">⛶ 全屏 Fullscreen</button>
       </div>
       <textarea id="dashReportText" readonly rows="22" style="width:100%;min-height:420px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:14px 16px;font-size:13.5px;line-height:1.7;font-family:var(--mono);resize:vertical;white-space:pre-wrap;" placeholder="点击上方按钮生成晨报或晚报..."></textarea>
     </div>
@@ -651,11 +658,14 @@
         <table id="stopEngineTable">
           <thead>
             <tr>
-              <th>代码</th><th>现价</th><th>持仓天数</th><th>R倍数</th>
-              <th>主止损 Primary</th><th>距现价</th>
-              <th>次级止损 Secondary</th><th>距现价</th>
-              <th>紧急止损 Emergency</th><th>距现价</th>
-              <th>周线大局</th><th>提示</th>
+              <th style="cursor:pointer;" onclick="sortStopEngine('ticker')">代码<span class="ssa" data-key="ticker"></span></th>
+              <th style="cursor:pointer;" onclick="sortStopEngine('price')">现价<span class="ssa" data-key="price"></span></th>
+              <th style="cursor:pointer;" onclick="sortStopEngine('holdDays')">持仓天数<span class="ssa" data-key="holdDays"></span></th>
+              <th style="cursor:pointer;" onclick="sortStopEngine('rMultiple')">R倍数<span class="ssa" data-key="rMultiple"></span></th>
+              <th>主止损 Primary</th><th style="cursor:pointer;" onclick="sortStopEngine('primaryDist')">距现价<span class="ssa" data-key="primaryDist"></span></th>
+              <th>次级止损 Secondary</th><th style="cursor:pointer;" onclick="sortStopEngine('secondaryDist')">距现价<span class="ssa" data-key="secondaryDist"></span></th>
+              <th>紧急止损 Emergency</th><th style="cursor:pointer;" onclick="sortStopEngine('emergencyDist')">距现价<span class="ssa" data-key="emergencyDist"></span></th>
+              <th style="cursor:pointer;" onclick="sortStopEngine('weeklyVerdict')">周线大局<span class="ssa" data-key="weeklyVerdict"></span></th><th>提示</th>
             </tr>
           </thead>
           <tbody id="stopEngineBody"><tr><td colspan="12" class="lang-en" style="padding:16px;">点击上方"计算止损引擎"按钮开始</td></tr></tbody>
@@ -1698,7 +1708,58 @@ function saveStockBarsCache(){
   }
 }
 function todayStr(){ return new Date().toISOString().split('T')[0]; }
+let reportFullscreenOn = false;
+function toggleReportFullscreen(){
+  const ta = document.getElementById('dashReportText');
+  const btn = document.getElementById('dashReportFullscreenBtn');
+  if(!ta) return;
+  reportFullscreenOn = !reportFullscreenOn;
+  if(reportFullscreenOn){
+    ta.classList.add('report-fullscreen');
+    if(btn) btn.textContent = '✕ 退出全屏 Exit Fullscreen';
+  } else {
+    ta.classList.remove('report-fullscreen');
+    if(btn) btn.textContent = '⛶ 全屏 Fullscreen';
+  }
+}
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && reportFullscreenOn) toggleReportFullscreen();
+});
+
 function heldTickers(){ return [...new Set(positions.map(p=>p.ticker))]; }
+
+/* ================================================================
+   GENERIC TABLE SORT UTILITY (shared across all sortable tables)
+   ================================================================ */
+let tableSortState = {}; // tableId -> {key, dir:1|-1}
+let liquidityLastArgs = null; // {perPosition, totalValue} cached for re-render on sort click
+function toggleSort(tableId, key, renderFn){
+  const st = tableSortState[tableId] || {key:null, dir:1};
+  if(st.key===key){ st.dir = -st.dir; } else { st.key = key; st.dir = 1; }
+  tableSortState[tableId] = st;
+  if(renderFn) renderFn();
+  paintSortArrows(tableId);
+}
+function sortRows(tableId, rows, keyGetters){
+  const st = tableSortState[tableId];
+  if(!st || !st.key || !keyGetters[st.key]) return rows;
+  const getter = keyGetters[st.key];
+  return [...rows].sort((a,b)=>{
+    let va = getter(a), vb = getter(b);
+    if(va==null && vb==null) return 0;
+    if(va==null) return 1;
+    if(vb==null) return -1;
+    if(typeof va==='string') return va.localeCompare(vb,'zh') * st.dir;
+    return (va-vb) * st.dir;
+  });
+}
+function paintSortArrows(tableId){
+  document.querySelectorAll(`.sa-${tableId}`).forEach(el=>{
+    const key = el.dataset.key;
+    const st = tableSortState[tableId];
+    el.textContent = (st && st.key===key) ? (st.dir===1?' ▲':' ▼') : '';
+  });
+}
 
 // Date-aware cached wrapper around the existing fetchDailyBars(). Same-day
 // requests reuse the cache — avoids re-hitting Alpaca on every tab switch.
@@ -2076,12 +2137,26 @@ function renderStockTable(){
     const av = a.composite ?? -1, bv = b.composite ?? -1;
     return bv-av;
   });
+  const sortedRows = sortRows('stockScore', rows, {
+    ticker:s=>s.ticker, composite:s=>s.composite, grade:s=>s.grade, signal:s=>s.signal?s.signal.text:null,
+    trend:s=>s.trendScore, momentum:s=>s.momentumScore, rs:s=>s.rsScore, volume:s=>s.volumeScore,
+    volatility:s=>s.volatilityScore, timing:s=>s.timingScore, date:s=>s.barsDate
+  });
 
   wrap.innerHTML = `<table><thead><tr>
-    <th>代码</th><th>综合分</th><th>评级</th><th>信号</th>
-    <th>趋势</th><th>动量</th><th>RS</th><th>量能</th><th>波动</th><th>时机</th><th>数据日期</th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','ticker',renderStockTable)">代码<span class="sa-stockScore" data-key="ticker"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','composite',renderStockTable)">综合分<span class="sa-stockScore" data-key="composite"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','grade',renderStockTable)">评级<span class="sa-stockScore" data-key="grade"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','signal',renderStockTable)">信号<span class="sa-stockScore" data-key="signal"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','trend',renderStockTable)">趋势<span class="sa-stockScore" data-key="trend"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','momentum',renderStockTable)">动量<span class="sa-stockScore" data-key="momentum"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','rs',renderStockTable)">RS<span class="sa-stockScore" data-key="rs"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','volume',renderStockTable)">量能<span class="sa-stockScore" data-key="volume"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','volatility',renderStockTable)">波动<span class="sa-stockScore" data-key="volatility"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','timing',renderStockTable)">时机<span class="sa-stockScore" data-key="timing"></span></th>
+    <th style="cursor:pointer;" onclick="toggleSort('stockScore','date',renderStockTable)">数据日期<span class="sa-stockScore" data-key="date"></span></th>
   </tr></thead><tbody>
-  ${rows.map(s=>{
+  ${sortedRows.map(s=>{
     if(s.notyet){
       return `<tr class="rowclick" onclick="recalcStockScores()"><td class="ticker">${s.ticker}</td>
         <td colspan="10" class="lang-en">尚未计算，点击"重新计算"获取评分</td></tr>`;
@@ -2482,12 +2557,20 @@ function renderStopEngineTable(){
   const dist = (level, price) => level==null||price==null ? null : (level-price)/price*100;
   rows.forEach(r=>{
     r._primaryDist = r.primary ? dist(r.primary.value, r.price) : null;
+    r._secondaryDist = r.secondary ? dist(r.secondary.value, r.price) : null;
+    r._emergencyDist = r.emergencyStop!=null ? dist(r.emergencyStop, r.price) : null;
   });
   const rc = stopEngineSort.col, rd = stopEngineSort.dir==='asc'?1:-1;
   rows.sort((a,b)=>{
     if(a.notyet||a.insufficient) return 1;
     if(b.notyet||b.insufficient) return -1;
     if(rc==='ticker') return a.ticker.localeCompare(b.ticker)*rd;
+    if(rc==='price') return ((a.price??-1)-(b.price??-1))*rd;
+    if(rc==='holdDays') return ((a.holdDays??-1)-(b.holdDays??-1))*rd;
+    if(rc==='rMultiple') return ((a.rMultiple??-999)-(b.rMultiple??-999))*rd;
+    if(rc==='secondaryDist'){ const va=a._secondaryDist??999, vb=b._secondaryDist??999; return (va-vb)*rd; }
+    if(rc==='emergencyDist'){ const va=a._emergencyDist??999, vb=b._emergencyDist??999; return (va-vb)*rd; }
+    if(rc==='weeklyVerdict') return String(a.weeklyVerdict??'').localeCompare(String(b.weeklyVerdict??''))*rd;
     const va = a._primaryDist ?? 999, vb = b._primaryDist ?? 999;
     return (va-vb)*rd;
   });
@@ -2556,6 +2639,9 @@ function sortStopEngine(col){
   if(stopEngineSort.col===col) stopEngineSort.dir = stopEngineSort.dir==='asc'?'desc':'asc';
   else { stopEngineSort.col = col; stopEngineSort.dir = 'asc'; }
   renderStopEngineTable();
+  document.querySelectorAll('.ssa').forEach(el=>{
+    el.textContent = el.dataset.key===stopEngineSort.col ? (stopEngineSort.dir==='asc'?' ▲':' ▼') : '';
+  });
 }
 
 /* ================================================================
@@ -3179,11 +3265,21 @@ function renderMarketIntel(){
   `;
 
   if(m.breadth.total>0){
+    const breadthSorted = sortRows('mktBreadth', m.breadth.details, {
+      ticker:d=>d.ticker, price:d=>d.price, sma20:d=>d.sma20, position:d=>(d.price-d.sma20)/d.sma20
+    });
+    const defaultSorted = tableSortState['mktBreadth'] ? breadthSorted
+      : [...m.breadth.details].sort((a,b)=>(b.price-b.sma20)/b.sma20-(a.price-a.sma20)/a.sma20);
     breadthEl.innerHTML = `
       <table style="width:100%;border-collapse:collapse;">
-        <thead><tr><th>代码</th><th>收盘价</th><th>SMA20</th><th>位置</th></tr></thead>
+        <thead><tr>
+          <th style="cursor:pointer;" onclick="toggleSort('mktBreadth','ticker',renderMarketIntel)">代码<span class="sa-mktBreadth" data-key="ticker"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktBreadth','price',renderMarketIntel)">收盘价<span class="sa-mktBreadth" data-key="price"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktBreadth','sma20',renderMarketIntel)">SMA20<span class="sa-mktBreadth" data-key="sma20"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktBreadth','position',renderMarketIntel)">位置<span class="sa-mktBreadth" data-key="position"></span></th>
+        </tr></thead>
         <tbody>
-          ${m.breadth.details.sort((a,b)=>(b.price-b.sma20)/b.sma20-(a.price-a.sma20)/a.sma20).map(d=>`
+          ${defaultSorted.map(d=>`
             <tr>
               <td class="ticker">${d.ticker}</td>
               <td>${fmt$(d.price)}</td>
@@ -3199,13 +3295,22 @@ function renderMarketIntel(){
   }
 
   if(m.sectorRotation.length>0){
+    const sectorSorted = sortRows('mktSector', m.sectorRotation, {
+      sector:s=>s.sector, avgScore:s=>s.avgScore, count:s=>s.count, tickers:s=>s.tickers.join('、')
+    });
+    const sectorList = tableSortState['mktSector'] ? sectorSorted : m.sectorRotation;
     sectorEl.innerHTML = `
       <table style="width:100%;border-collapse:collapse;">
-        <thead><tr><th>板块</th><th>板块内平均个股评分</th><th>覆盖只数</th><th>代码</th></tr></thead>
+        <thead><tr>
+          <th style="cursor:pointer;" onclick="toggleSort('mktSector','sector',renderMarketIntel)">板块<span class="sa-mktSector" data-key="sector"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktSector','avgScore',renderMarketIntel)">板块内平均个股评分<span class="sa-mktSector" data-key="avgScore"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktSector','count',renderMarketIntel)">覆盖只数<span class="sa-mktSector" data-key="count"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('mktSector','tickers',renderMarketIntel)">代码<span class="sa-mktSector" data-key="tickers"></span></th>
+        </tr></thead>
         <tbody>
-          ${m.sectorRotation.map((s,i)=>`
+          ${sectorList.map((s,i)=>`
             <tr>
-              <td>${i===0?'🔥 ':(i===m.sectorRotation.length-1&&m.sectorRotation.length>1?'❄️ ':'')}${s.sector}</td>
+              <td>${i===0&&!tableSortState['mktSector']?'🔥 ':(i===sectorList.length-1&&sectorList.length>1&&!tableSortState['mktSector']?'❄️ ':'')}${s.sector}</td>
               <td style="color:${stockScoreColor(s.avgScore)};">${s.avgScore.toFixed(1)}</td>
               <td>${s.count}</td>
               <td style="font-size:11.5px;color:var(--muted);white-space:normal;">${s.tickers.join('、')}</td>
@@ -3855,7 +3960,11 @@ function renderDashboardTable(brief){
   if(!body) return;
   if(heldTickers().length===0){ body.innerHTML = ''; return; }
   const b = brief || computeDailyBriefing();
-  body.innerHTML = b.byPriority.map(d=>{
+  const rows = sortRows('dashAi', b.byPriority, {
+    ticker:d=>d.ticker, action:d=>d.action.label, confidence:d=>d.confidenceLabel,
+    composite:d=>d.composite, rMultiple:d=>d.rMultiple, holdDays:d=>d.holdDays, weight:d=>d.weightPct
+  });
+  body.innerHTML = rows.map(d=>{
     const rowHtml = `
     <tr class="rowclick" id="dashAiTicker-${d.ticker}" onclick="toggleAiDetail('${d.ticker}')">
       <td class="ticker">${d.ticker}</td>
@@ -4841,17 +4950,9 @@ function renderPositions(){
     const groupProfitHit = lots.some(p=>p.takeProfit && (quoteCache[p.ticker]?.price??null)!==null && (quoteCache[p.ticker]?.price)>=p.takeProfit);
 
     html += `
-      <tr class="group-row ${lossAlertHit?'loss-alert-row':''}"
-        draggable="true"
-        ondragstart="onDragStart(event,'${ticker}')"
-        ondragend="onDragEnd(event)"
-        ondragover="onDragOver(event,'${ticker}')"
-        ondragenter="onDragEnter(event,'${ticker}')"
-        ondragleave="onDragLeave(event)"
-        ondrop="onDrop(event,'${ticker}')">
+      <tr class="group-row ${lossAlertHit?'loss-alert-row':''}">
         <td onclick="toggleGroup('${ticker}')" style="cursor:pointer;">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <span class="drag-handle" title="拖拽排序">⠿</span>
             <span style="display:inline-block;width:14px;transform:rotate(${isExpanded?90:0}deg);">▸</span>
             <span class="ticker">${ticker}</span>
             ${lots.length>1?`<span class="ticker-note">${lots.length}笔</span>`:''}
@@ -5996,6 +6097,7 @@ function renderStressTest(portBeta, totalValue){
 function renderLiquidityCheck(perPosition, totalValue){
   const el = document.getElementById('liquidityPanel');
   if(!el) return;
+  liquidityLastArgs = { perPosition, totalValue };
 
   const rows = perPosition.map(pp=>{
     const bars = barsCache[pp.ticker];
@@ -6015,7 +6117,13 @@ function renderLiquidityCheck(perPosition, totalValue){
     const daysToLiquidate = tradableSharesPerDay ? Math.ceil(qty / tradableSharesPerDay) : null;
 
     return { ticker:pp.ticker, avgVolume, daysToLiquidate, qty, mv };
-  }).sort((a,b)=>(b.daysToLiquidate||0)-(a.daysToLiquidate||0));
+  }); // end map
+
+  const sortedRows = sortRows('liquidity', rows, {
+    ticker:r=>r.ticker, qty:r=>r.qty, avgVolume:r=>r.avgVolume, daysToLiquidate:r=>r.daysToLiquidate
+  });
+  const displayRows = tableSortState['liquidity'] ? sortedRows
+    : [...rows].sort((a,b)=>(b.daysToLiquidate||0)-(a.daysToLiquidate||0));
 
   function riskLabel(days){
     if(days===null) return { text:'数据不足', color:'var(--muted)' };
@@ -6028,11 +6136,15 @@ function renderLiquidityCheck(perPosition, totalValue){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th>代码</th><th>持仓数量</th><th>20日均量</th><th>预计平仓天数*</th><th>流动性评级</th>
+          <th style="cursor:pointer;" onclick="toggleSort('liquidity','ticker',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">代码<span class="sa-liquidity" data-key="ticker"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('liquidity','qty',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">持仓数量<span class="sa-liquidity" data-key="qty"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('liquidity','avgVolume',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">20日均量<span class="sa-liquidity" data-key="avgVolume"></span></th>
+          <th style="cursor:pointer;" onclick="toggleSort('liquidity','daysToLiquidate',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">预计平仓天数*<span class="sa-liquidity" data-key="daysToLiquidate"></span></th>
+          <th>流动性评级</th>
         </tr>
       </thead>
       <tbody>
-        ${rows.map(r=>{
+        ${displayRows.map(r=>{
           const risk = riskLabel(r.daysToLiquidate);
           return `
             <tr>
