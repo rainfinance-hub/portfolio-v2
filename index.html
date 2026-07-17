@@ -1370,6 +1370,32 @@
       </div>
     </div>
     <div class="field" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+      <label style="font-size:12px;font-weight:600;color:var(--accent2);">☁️ 云同步 / Cloud Sync</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer;">
+        <input id="cloudSyncEnabled" type="checkbox" style="width:auto;" onchange="onCloudSyncToggle()">
+        开启云同步（用于在多台设备间同步持仓等数据）
+      </label>
+      <div style="margin-top:8px;">
+        <label>Worker URL</label>
+        <input id="cloudSyncWorkerUrl" placeholder="https://cloud-sync-worker.你的账号.workers.dev">
+      </div>
+      <div style="margin-top:8px;">
+        <label>同步密码 Sync Secret</label>
+        <input id="cloudSyncSecret" type="password" placeholder="与 Worker 环境变量 SYNC_SECRET 保持一致">
+      </div>
+      <div class="hint">
+        仅同步：持仓、已平仓历史、个股标签/备注/意向设置、观察名单、股息记录、手动净值快照、再平衡目标。
+        <b>不会同步</b>：Alpaca/FMP密钥、Discord Webhook、以及所有实时报价/评分/止损计算结果——这些始终只在本机重新计算。
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <button class="ghost small" onclick="manualCloudSync()">☁️ 立即同步</button>
+        <span id="cloudSyncStatusText" style="font-size:12px;color:var(--muted);">尚未启用</span>
+      </div>
+      <div style="margin-top:6px;font-size:12px;color:var(--muted);">
+        上次同步：<span id="cloudSyncLastTime">从未同步</span>
+      </div>
+    </div>
+    <div class="field" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
       <label style="font-size:12px;font-weight:600;color:var(--accent2);">本地存储用量 / Storage Usage</label>
       <div id="storageUsagePanel" style="margin-top:8px;"></div>
     </div>
@@ -1511,7 +1537,8 @@ let settings = {
   trailMethod:'pct', trailPct:8, trailAtrMult:2.5, trailIntervalSec:60,
   autoRefreshEnabled: false, autoRefreshMin: 5,
   extendedHours: false,
-  encryptStorage: false, encryptPin: ''
+  encryptStorage: false, encryptPin: '',
+  cloudSyncEnabled: false, cloudSyncWorkerUrl: '', cloudSyncSecret: '', cloudSyncLastSyncAt: 0
 };
 let quoteCache = {}; // ticker -> {price, prevClose, ts}
 let barsCache = {}; // ticker -> array of {t, c, h, l} daily bars
@@ -1531,12 +1558,12 @@ const NAV_SNAPSHOTS_KEY = 'portfolio_tracker_nav_v1';
 function loadWatchlist(){
   try{ const s=localStorage.getItem(WATCHLIST_KEY); watchlist = s?JSON.parse(s):[]; }catch(e){ watchlist=[]; }
 }
-function saveWatchlist(){ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist)); }
+function saveWatchlist(){ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist)); scheduleCloudSync(); }
 
 function loadRebalanceTargets(){
   try{ const s=localStorage.getItem(REBALANCE_KEY); rebalanceTargets = s?JSON.parse(s):{}; }catch(e){ rebalanceTargets={}; }
 }
-function saveRebalanceTargets(){ localStorage.setItem(REBALANCE_KEY, JSON.stringify(rebalanceTargets)); }
+function saveRebalanceTargets(){ localStorage.setItem(REBALANCE_KEY, JSON.stringify(rebalanceTargets)); scheduleCloudSync(); }
 
 function loadTradeJournal(){
   try{ const s=localStorage.getItem(TRADE_JOURNAL_KEY); tradeJournal = s?JSON.parse(s):{}; }catch(e){ tradeJournal={}; }
@@ -1546,7 +1573,7 @@ function saveTradeJournal(){ localStorage.setItem(TRADE_JOURNAL_KEY, JSON.string
 function loadDividendReceipts(){
   try{ const s=localStorage.getItem(DIV_RECEIPTS_KEY); dividendReceipts = s?JSON.parse(s):[]; }catch(e){ dividendReceipts=[]; }
 }
-function saveDividendReceipts(){ localStorage.setItem(DIV_RECEIPTS_KEY, JSON.stringify(dividendReceipts)); }
+function saveDividendReceipts(){ localStorage.setItem(DIV_RECEIPTS_KEY, JSON.stringify(dividendReceipts)); scheduleCloudSync(); }
 
 function loadRiskHistory(){
   try{ const s=localStorage.getItem(RISK_HISTORY_KEY); riskHistory = s?JSON.parse(s):[]; }catch(e){ riskHistory=[]; }
@@ -1573,6 +1600,7 @@ function loadNavSnapshots(){
 function saveNavSnapshots(){
   navSnapshots = navSnapshots.slice(-365);
   localStorage.setItem(NAV_SNAPSHOTS_KEY, JSON.stringify(navSnapshots));
+  scheduleCloudSync();
 }
 function recordNavSnapshot(totalValue){
   if(!totalValue || totalValue<=0) return;
@@ -1664,12 +1692,243 @@ function loadState(){
 }
 function saveState(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(positions));
+  scheduleCloudSync();
 }
 function persistSettings(){
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 function saveTickerSettings(){
   localStorage.setItem(TICKER_SETTINGS_KEY, JSON.stringify(tickerSettings));
+  scheduleCloudSync();
+}
+
+/* ================================================================
+   CLOUD SYNC ENGINE (v2_07) — 模块⑦ 云端数据同步
+   基于自建 Cloudflare Worker + KV 的简单键值同步，覆盖式而非合并式。
+   同步范围：positions / closedTrades / tickerSettings / watchlist /
+             dividendReceipts / navSnapshots / rebalanceTargets
+   明确不同步：API Key、Discord Webhook（settings 其余字段）、
+             任何实时报价/评分/止损计算结果（这些永远本机重算）。
+   触发方式：
+     1) 相关数据变化 → 2秒防抖 → 自动 POST 推送到云端
+     2) 页面加载时（若已启用）→ GET 拉取云端 → 时间戳较新则覆盖本地
+     3) 用户点击"立即同步" → 比较时间戳，云端新则拉取覆盖，否则推送本地
+   ================================================================ */
+let cloudSyncDebounceTimer = null;
+let suppressCloudSync = false;   // true while applying a remote payload, to avoid push-loop
+let cloudSyncInFlight = false;
+
+function cloudSyncWorkerBase(){
+  return (settings.cloudSyncWorkerUrl || '').trim().replace(/\/+$/,'');
+}
+
+function scheduleCloudSync(){
+  if(suppressCloudSync) return;
+  if(!settings.cloudSyncEnabled) return;
+  if(!settings.cloudSyncWorkerUrl || !settings.cloudSyncSecret) return;
+  clearTimeout(cloudSyncDebounceTimer);
+  cloudSyncDebounceTimer = setTimeout(()=>{ pushCloudSync(false); }, 2000);
+}
+
+function setCloudSyncStatus(type, message){
+  settings.cloudSyncLastStatusType = type;
+  settings.cloudSyncLastStatusMsg = message;
+  const el = document.getElementById('cloudSyncStatusText');
+  if(el){
+    const color = type==='error' ? 'var(--red)' : type==='syncing' ? 'var(--amber)' : type==='success' ? 'var(--green)' : 'var(--muted)';
+    el.style.color = color;
+    el.textContent = message;
+  }
+  const timeEl = document.getElementById('cloudSyncLastTime');
+  if(timeEl){
+    timeEl.textContent = settings.cloudSyncLastSyncAt ? new Date(settings.cloudSyncLastSyncAt).toLocaleString('zh-CN') : '从未同步';
+  }
+}
+
+// Called when opening the settings modal — refresh display without hitting the network.
+function refreshCloudSyncStatusDisplay(){
+  if(!settings.cloudSyncEnabled){
+    setCloudSyncStatus('idle','未启用');
+    return;
+  }
+  if(!settings.cloudSyncWorkerUrl || !settings.cloudSyncSecret){
+    setCloudSyncStatus('error','已启用但未填写 Worker URL / 同步密码');
+    return;
+  }
+  setCloudSyncStatus(settings.cloudSyncLastStatusType || 'idle', settings.cloudSyncLastStatusMsg || '已启用，等待同步');
+}
+
+function onCloudSyncToggle(){
+  const enabled = document.getElementById('cloudSyncEnabled').checked;
+  if(enabled){
+    setCloudSyncStatus('idle','已启用，保存设置后将尝试连接');
+  } else {
+    setCloudSyncStatus('idle','未启用');
+  }
+}
+
+function buildCloudSyncPayload(){
+  return {
+    positions, closedTrades, tickerSettings, watchlist,
+    dividendReceipts, navSnapshots, rebalanceTargets
+  };
+}
+
+// Applies a remote payload to local state. Guarded by suppressCloudSync so this
+// doesn't itself trigger another push (which would create push/pull ping-pong).
+function applyCloudSyncPayload(data){
+  if(!data || typeof data!=='object') return;
+  suppressCloudSync = true;
+  try{
+    if(Array.isArray(data.positions)){ positions = data.positions; positions.forEach(p=>{ if(p.initialRisk===undefined) setInitialRiskIfNeeded(p); }); saveState(); }
+    if(Array.isArray(data.closedTrades)){ closedTrades = data.closedTrades; saveClosedTrades(); }
+    if(data.tickerSettings && typeof data.tickerSettings==='object' && !Array.isArray(data.tickerSettings)){ tickerSettings = data.tickerSettings; saveTickerSettings(); }
+    if(Array.isArray(data.watchlist)){ watchlist = data.watchlist; saveWatchlist(); }
+    if(Array.isArray(data.dividendReceipts)){ dividendReceipts = data.dividendReceipts; saveDividendReceipts(); }
+    if(Array.isArray(data.navSnapshots)){ navSnapshots = data.navSnapshots; saveNavSnapshots(); }
+    if(data.rebalanceTargets && typeof data.rebalanceTargets==='object' && !Array.isArray(data.rebalanceTargets)){ rebalanceTargets = data.rebalanceTargets; saveRebalanceTargets(); }
+  } finally {
+    suppressCloudSync = false;
+  }
+  // re-render everything that could be affected by the overwrite
+  try{ renderPositions(); }catch(e){}
+  try{ renderClosedTrades(); }catch(e){}
+  try{ renderWatchlist(); }catch(e){}
+  try{ renderDividendTab(); renderDividendReceipts(); }catch(e){}
+  try{ renderAllocation(); }catch(e){}
+  try{ renderStopEngineSummary(); renderStopEngineTable(); }catch(e){}
+  try{ renderPortfolioIntel(); }catch(e){}
+  try{ renderDashboard(); }catch(e){}
+}
+
+// Centralized request helper — translates network/HTTP failures into clear Chinese
+// error messages so the user never mistakenly believes a sync succeeded.
+async function cloudSyncRequest(method, bodyObj){
+  const base = cloudSyncWorkerBase();
+  if(!base) throw new Error('未填写 Worker URL');
+  if(!settings.cloudSyncSecret) throw new Error('未填写同步密码 Sync Secret');
+  const url = base + '/sync';
+  let res;
+  try{
+    res = await fetch(url, {
+      method,
+      headers: Object.assign(
+        { 'X-Sync-Secret': settings.cloudSyncSecret },
+        method==='POST' ? { 'Content-Type':'application/json' } : {}
+      ),
+      body: method==='POST' ? JSON.stringify(bodyObj) : undefined
+    });
+  }catch(netErr){
+    throw new Error('网络错误：无法连接到 Worker，请检查 URL 是否正确、Worker 是否已部署、网络连接是否正常');
+  }
+  if(res.status===401){
+    throw new Error('同步密码错误，请检查设置里的 Sync Secret 是否与 Worker 的 SYNC_SECRET 一致');
+  }
+  if(res.status===404){
+    throw new Error('Worker 返回 404，请确认 Worker URL 填写正确（不需要包含 /sync 路径）');
+  }
+  if(res.status===500){
+    let extra=''; try{ const j = await res.json(); extra = j.message?`：${j.message}`:''; }catch(e){}
+    throw new Error('Worker 服务端错误' + extra + '（请检查 KV Namespace 绑定与 SYNC_SECRET 是否已配置）');
+  }
+  if(!res.ok){
+    let extra=''; try{ const j = await res.json(); extra = j.message?`：${j.message}`:''; }catch(e){}
+    throw new Error(`同步失败，HTTP ${res.status}${extra}`);
+  }
+  let json;
+  try{ json = await res.json(); }catch(e){ throw new Error('云端返回的数据不是合法 JSON，Worker 部署可能有误'); }
+  return json;
+}
+
+async function pushCloudSync(manual){
+  if(cloudSyncInFlight) return;
+  if(!manual && !settings.cloudSyncEnabled) return;
+  if(!settings.cloudSyncWorkerUrl || !settings.cloudSyncSecret){
+    setCloudSyncStatus('error','未配置 Worker URL 或同步密码');
+    return;
+  }
+  cloudSyncInFlight = true;
+  setCloudSyncStatus('syncing','正在推送到云端...');
+  const updatedAt = Date.now();
+  try{
+    const resp = await cloudSyncRequest('POST', { data: buildCloudSyncPayload(), updatedAt });
+    settings.cloudSyncLastSyncAt = (resp && resp.updatedAt) || updatedAt;
+    persistSettings();
+    setCloudSyncStatus('success', '已推送到云端 · ' + new Date(settings.cloudSyncLastSyncAt).toLocaleString('zh-CN'));
+  }catch(e){
+    setCloudSyncStatus('error', e.message || '同步失败（未知错误）');
+  }finally{
+    cloudSyncInFlight = false;
+  }
+}
+
+// Runs on page load when cloud sync is enabled. Pulls remote data and overwrites
+// local state ONLY if the remote copy is newer than the last time this device
+// synced anything — no field-level merge, per spec ("不做复杂合并").
+async function pullCloudSyncOnLoad(){
+  if(!settings.cloudSyncEnabled) return;
+  if(!settings.cloudSyncWorkerUrl || !settings.cloudSyncSecret){
+    setCloudSyncStatus('error','已启用云同步但未填写 Worker URL / 同步密码');
+    return;
+  }
+  if(cloudSyncInFlight) return;
+  cloudSyncInFlight = true;
+  setCloudSyncStatus('syncing','正在检查云端数据...');
+  try{
+    const remote = await cloudSyncRequest('GET');
+    if(remote && remote.data && remote.updatedAt){
+      if(remote.updatedAt > (settings.cloudSyncLastSyncAt||0)){
+        applyCloudSyncPayload(remote.data);
+        settings.cloudSyncLastSyncAt = remote.updatedAt;
+        persistSettings();
+        setCloudSyncStatus('success','已从云端拉取最新数据 · ' + new Date(remote.updatedAt).toLocaleString('zh-CN'));
+        showToast('☁️ 已从云端同步最新数据，本地数据已更新');
+      } else {
+        setCloudSyncStatus('success','本地数据已是最新 · 上次同步 ' + new Date(settings.cloudSyncLastSyncAt||remote.updatedAt).toLocaleString('zh-CN'));
+      }
+    } else {
+      setCloudSyncStatus('idle','云端暂无数据，编辑数据后将自动上传');
+    }
+  }catch(e){
+    setCloudSyncStatus('error', e.message || '拉取失败（未知错误）');
+  }finally{
+    cloudSyncInFlight = false;
+  }
+}
+
+// Manual "立即同步" button — smarter than the background debounce push: checks
+// remote first, pulls if remote is newer, otherwise pushes local state up.
+async function manualCloudSync(){
+  if(!settings.cloudSyncWorkerUrl || !settings.cloudSyncSecret){
+    showToast('请先填写 Worker URL 和同步密码');
+    setCloudSyncStatus('error','未配置 Worker URL 或同步密码');
+    return;
+  }
+  if(cloudSyncInFlight) return;
+  cloudSyncInFlight = true;
+  setCloudSyncStatus('syncing','正在同步...');
+  try{
+    const remote = await cloudSyncRequest('GET');
+    if(remote && remote.data && remote.updatedAt && remote.updatedAt > (settings.cloudSyncLastSyncAt||0)){
+      applyCloudSyncPayload(remote.data);
+      settings.cloudSyncLastSyncAt = remote.updatedAt;
+      persistSettings();
+      setCloudSyncStatus('success','云端数据更新，已拉取覆盖本地 · ' + new Date(remote.updatedAt).toLocaleString('zh-CN'));
+      showToast('☁️ 云端数据更新，已覆盖本地');
+    } else {
+      const updatedAt = Date.now();
+      const resp = await cloudSyncRequest('POST', { data: buildCloudSyncPayload(), updatedAt });
+      settings.cloudSyncLastSyncAt = (resp && resp.updatedAt) || updatedAt;
+      persistSettings();
+      setCloudSyncStatus('success','已推送本地数据到云端 · ' + new Date(settings.cloudSyncLastSyncAt).toLocaleString('zh-CN'));
+      showToast('☁️ 已推送本地数据到云端');
+    }
+  }catch(e){
+    setCloudSyncStatus('error', e.message || '同步失败（未知错误）');
+    showToast('☁️ 同步失败：' + (e.message || '未知错误'));
+  }finally{
+    cloudSyncInFlight = false;
+  }
 }
 
 /* ================================================================
@@ -3495,9 +3754,13 @@ function openSettings(){
   document.getElementById('extendedHours').checked = settings.extendedHours;
   document.getElementById('encryptStorage').checked = settings.encryptStorage;
   document.getElementById('encryptPin').value = '';
+  document.getElementById('cloudSyncEnabled').checked = settings.cloudSyncEnabled;
+  document.getElementById('cloudSyncWorkerUrl').value = settings.cloudSyncWorkerUrl || '';
+  document.getElementById('cloudSyncSecret').value = settings.cloudSyncSecret || '';
   toggleTrailMethodParams();
   toggleSlMethodParams();
   renderStorageUsage();
+  refreshCloudSyncStatusDisplay();
   document.getElementById('settingsModal').classList.add('show');
 }
 function toggleSlMethodParams(){
@@ -3544,12 +3807,19 @@ async function saveSettings(){
     settings.encryptPin = pin;
     await encryptApiKeys();
   }
+  settings.cloudSyncEnabled = document.getElementById('cloudSyncEnabled').checked;
+  settings.cloudSyncWorkerUrl = document.getElementById('cloudSyncWorkerUrl').value.trim();
+  settings.cloudSyncSecret = document.getElementById('cloudSyncSecret').value.trim();
   persistSettings();
   closeSettings();
   updateConnStatus();
   restartTrailingTimer();
   restartAutoRefresh();
   showToast('设置已保存 Settings saved');
+  if(settings.cloudSyncEnabled){
+    // just enabled, or URL/secret may have changed — do a connectivity check now
+    pullCloudSyncOnLoad();
+  }
 }
 /* ============== THEME ============== */
 function toggleTheme(){
@@ -4337,6 +4607,7 @@ function loadClosedTrades(){
 }
 function saveClosedTrades(){
   localStorage.setItem(CLOSED_TRADES_KEY, JSON.stringify(closedTrades));
+  scheduleCloudSync();
 }
 
 function removePosition(id){
@@ -8867,6 +9138,8 @@ function init(){
   }
   // check earnings alerts on load (daily reminder)
   setTimeout(()=>checkEarningsAlerts(), 3000);
+  // if cloud sync is enabled, check for newer remote data shortly after load
+  if(settings.cloudSyncEnabled) setTimeout(()=>pullCloudSyncOnLoad(), 1500);
 }
 init();
 </script>
