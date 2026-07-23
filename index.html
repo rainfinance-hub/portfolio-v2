@@ -303,6 +303,8 @@
     z-index:9999; border-radius:0 !important; font-size:15px !important;
     padding:32px !important; resize:none !important;
   }
+  #summaryCardsWrap{max-height:600px;overflow:hidden;transition:max-height .25s ease,opacity .2s ease;opacity:1;margin-bottom:0;}
+  #summaryCardsWrap.collapsed{max-height:0;opacity:0;pointer-events:none;}
 </style>
 </head>
 <body>
@@ -339,11 +341,14 @@
       </div>
       <input id="csvImportInput" type="file" accept=".csv" style="display:none;" onchange="handleCsvImport(event)">
       <input id="jsonImportInput" type="file" accept=".json" style="display:none;" onchange="handleJsonImport(event)">
+      <button class="ghost small" id="summaryToggleBtn" onclick="toggleSummaryCards()" title="收起/展开账户概览">▾ 收起概览</button>
       <button class="primary small" id="refreshBtn" onclick="runWithButtonLoading(this,'刷新中',refreshAll)">🔄 刷新 / Refresh</button>
     </div>
   </header>
 
-  <div class="summary-grid" id="summaryCards"></div>
+  <div id="summaryCardsWrap">
+    <div class="summary-grid" id="summaryCards"></div>
+  </div>
 
   <div class="tabs">
     <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">决策仪表盘 Dashboard</div>
@@ -1984,6 +1989,25 @@ function toggleReportFullscreen(){
 document.addEventListener('keydown', e=>{
   if(e.key==='Escape' && reportFullscreenOn) toggleReportFullscreen();
 });
+
+const SUMMARY_COLLAPSE_KEY = 'portfolio_tracker_summaryCollapsed_v1';
+function toggleSummaryCards(){
+  const wrap = document.getElementById('summaryCardsWrap');
+  const btn = document.getElementById('summaryToggleBtn');
+  if(!wrap || !btn) return;
+  const collapsed = wrap.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸ 展开概览' : '▾ 收起概览';
+  localStorage.setItem(SUMMARY_COLLAPSE_KEY, collapsed ? '1' : '0');
+}
+function applySummaryCollapseState(){
+  const wrap = document.getElementById('summaryCardsWrap');
+  const btn = document.getElementById('summaryToggleBtn');
+  if(!wrap || !btn) return;
+  if(localStorage.getItem(SUMMARY_COLLAPSE_KEY)==='1'){
+    wrap.classList.add('collapsed');
+    btn.textContent = '▸ 展开概览';
+  }
+}
 
 function heldTickers(){ return [...new Set(positions.map(p=>p.ticker))]; }
 
@@ -9131,6 +9155,7 @@ function init(){
   restartTrailingTimer();
   restartAutoRefresh();
   updateAutoRefreshStatus();
+  applySummaryCollapseState();
   if(settings.apiKeyId && settings.apiSecret && !settings.apiKeyId.startsWith('🔒') && positions.length>0){
     refreshQuotes([...new Set(positions.map(p=>p.ticker))]);
     // correct trailing-stop high-water-marks for any gap while the app was closed
