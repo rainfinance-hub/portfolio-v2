@@ -199,7 +199,7 @@
   [data-theme="light"] .group-row{background:rgba(0,0,0,0.025);}
   .lot-row{background:var(--row-lot,rgba(255,255,255,0.012));}
   [data-theme="light"] .lot-row{background:rgba(0,0,0,0.015);}
-  .inner-scroll{max-height:420px;overflow-y:auto;}
+  .inner-scroll{max-height:420px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .inner-scroll::-webkit-scrollbar{width:3px;}
   .inner-scroll::-webkit-scrollbar-track{background:transparent;}
   .inner-scroll::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:2px;}
@@ -307,6 +307,8 @@
   #summaryCardsWrap.collapsed{max-height:0;opacity:0;pointer-events:none;}
   #stockTableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   #stockTableWrap table{min-width:760px;}
+  .sticky-col{position:sticky;left:0;z-index:2;background:var(--panel);box-shadow:2px 0 4px rgba(0,0,0,0.15);}
+  thead .sticky-col{z-index:3;background:var(--panel2);}
 </style>
 </head>
 <body>
@@ -406,7 +408,7 @@
       <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;margin-top:10px;min-width:640px;">
         <thead><tr style="text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;">
-          <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','ticker',()=>renderDashboardTable())">代码 Ticker<span class="sa-dashAi" data-key="ticker"></span></th>
+          <th class="sticky-col" style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','ticker',()=>renderDashboardTable())">代码 Ticker<span class="sa-dashAi" data-key="ticker"></span></th>
           <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','action',()=>renderDashboardTable())">操作建议 Action<span class="sa-dashAi" data-key="action"></span></th>
           <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','confidence',()=>renderDashboardTable())">置信度 Confidence<span class="sa-dashAi" data-key="confidence"></span></th>
           <th style="padding:6px 8px;cursor:pointer;" onclick="toggleSort('dashAi','composite',()=>renderDashboardTable())">个股评分<span class="sa-dashAi" data-key="composite"></span></th>
@@ -488,7 +490,7 @@
         <table id="positionsTable">
           <thead>
             <tr>
-              <th onclick="sortBy('ticker')" style="cursor:pointer;">代码 / 备注 <span id="sort_ticker"></span></th>
+              <th class="sticky-col" onclick="sortBy('ticker')" style="cursor:pointer;">代码 / 备注 <span id="sort_ticker"></span></th>
               <th onclick="sortBy('qty')" style="cursor:pointer;">数量 <span id="sort_qty"></span></th>
               <th onclick="sortBy('cost')" style="cursor:pointer;">成本价 <span id="sort_cost"></span></th>
               <th onclick="sortBy('price')" style="cursor:pointer;">市值/股 <span id="sort_price"></span></th>
@@ -666,7 +668,7 @@
         <table id="stopEngineTable">
           <thead>
             <tr>
-              <th style="cursor:pointer;" onclick="sortStopEngine('ticker')">代码<span class="ssa" data-key="ticker"></span></th>
+              <th class="sticky-col" style="cursor:pointer;" onclick="sortStopEngine('ticker')">代码<span class="ssa" data-key="ticker"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('price')">现价<span class="ssa" data-key="price"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('holdDays')">持仓天数<span class="ssa" data-key="holdDays"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('rMultiple')">R倍数<span class="ssa" data-key="rMultiple"></span></th>
@@ -859,7 +861,7 @@
         <table style="width:100%;">
           <thead>
             <tr>
-              <th onclick="sortHistory('ticker')" style="cursor:pointer;">代码 / 备注 <span id="hsort_ticker"></span></th>
+              <th class="sticky-col" onclick="sortHistory('ticker')" style="cursor:pointer;">代码 / 备注 <span id="hsort_ticker"></span></th>
               <th onclick="sortHistory('qty')" style="cursor:pointer;">数量 <span id="hsort_qty"></span></th>
               <th onclick="sortHistory('cost')" style="cursor:pointer;">买入价 <span id="hsort_cost"></span></th>
               <th onclick="sortHistory('sellPrice')" style="cursor:pointer;">卖出价 <span id="hsort_sellPrice"></span></th>
@@ -2484,7 +2486,7 @@ function renderStockTable(){
   });
 
   wrap.innerHTML = `<table><thead><tr>
-    <th style="cursor:pointer;" onclick="toggleSort('stockScore','ticker',renderStockTable)">代码<span class="sa-stockScore" data-key="ticker"></span></th>
+    <th class="sticky-col" style="cursor:pointer;" onclick="toggleSort('stockScore','ticker',renderStockTable)">代码<span class="sa-stockScore" data-key="ticker"></span></th>
     <th style="cursor:pointer;" onclick="toggleSort('stockScore','composite',renderStockTable)">综合分<span class="sa-stockScore" data-key="composite"></span></th>
     <th style="cursor:pointer;" onclick="toggleSort('stockScore','grade',renderStockTable)">评级<span class="sa-stockScore" data-key="grade"></span></th>
     <th style="cursor:pointer;" onclick="toggleSort('stockScore','signal',renderStockTable)">信号<span class="sa-stockScore" data-key="signal"></span></th>
@@ -2498,16 +2500,16 @@ function renderStockTable(){
   </tr></thead><tbody>
   ${sortedRows.map(s=>{
     if(s.notyet){
-      return `<tr class="rowclick" onclick="recalcStockScores()"><td class="ticker">${s.ticker}</td>
+      return `<tr class="rowclick" onclick="recalcStockScores()"><td class="ticker sticky-col">${s.ticker}</td>
         <td colspan="10" class="lang-en">尚未计算，点击"重新计算"获取评分</td></tr>`;
     }
     if(s.insufficient){
-      return `<tr><td class="ticker">${s.ticker}</td>
+      return `<tr><td class="ticker sticky-col">${s.ticker}</td>
         <td colspan="10" class="lang-en" style="color:var(--red);">${s.error?'数据获取失败 Fetch failed':'历史数据不足（需≥30个交易日）'}</td></tr>`;
     }
     const rowHtml = `
     <tr class="rowclick" onclick="toggleStockDetail('${s.ticker}')">
-      <td class="ticker">${s.ticker}</td>
+      <td class="ticker sticky-col">${s.ticker}</td>
       <td><span class="score-badge" style="background:${stockScoreColor(s.composite)}22;color:${stockScoreColor(s.composite)};">${s.composite.toFixed(1)}</span></td>
       <td><span class="grade" style="background:${stockGradeColor(s.grade)}22;color:${stockGradeColor(s.grade)};">${s.grade}</span></td>
       <td style="color:${s.signal.color};font-family:var(--sans);font-size:12px;font-weight:600;">${s.signal.text}</td>
@@ -2930,11 +2932,11 @@ function renderStopEngineTable(){
 
   body.innerHTML = rows.map(s=>{
     if(s.notyet){
-      return `<tr class="rowclick" onclick="computeStopEngine()"><td class="ticker">${s.ticker}</td>
+      return `<tr class="rowclick" onclick="computeStopEngine()"><td class="ticker sticky-col">${s.ticker}</td>
         <td colspan="11" class="lang-en">尚未计算，点击上方"计算止损引擎"获取</td></tr>`;
     }
     if(s.insufficient){
-      return `<tr><td class="ticker">${s.ticker}</td>
+      return `<tr><td class="ticker sticky-col">${s.ticker}</td>
         <td colspan="11" class="lang-en" style="color:var(--red);">历史数据不足（需≥30个交易日）或获取失败</td></tr>`;
     }
     const wv = weeklyVerdictLabel(s.weeklyVerdict);
@@ -2947,7 +2949,7 @@ function renderStopEngineTable(){
       : (s.timeStopFlag ? '🟡 时间止损预警' : '✅ 正常');
     const rowHtml = `
     <tr class="rowclick" onclick="toggleStopDetail('${s.ticker}')">
-      <td class="ticker">${s.ticker}</td>
+      <td class="ticker sticky-col">${s.ticker}</td>
       <td>${fmt$(refPrice)}${s._priceIsLive?'<span style="color:var(--green);font-size:10px;" title="实时报价">●实时</span>':'<span style="color:var(--muted);font-size:10px;" title="无实时报价，退回日线收盘价">●收盘</span>'}</td>
       <td>${s.holdDays!=null?s.holdDays+'天':'—'}</td>
       <td class="${s.rMultiple!=null?pclass(s.rMultiple):'neu'}">${s.rMultiple!=null?s.rMultiple.toFixed(1)+'R':'—'}</td>
@@ -4332,7 +4334,7 @@ function renderDashboardTable(brief){
   body.innerHTML = rows.map(d=>{
     const rowHtml = `
     <tr class="rowclick" id="dashAiTicker-${d.ticker}" onclick="toggleAiDetail('${d.ticker}')">
-      <td class="ticker">${d.ticker}</td>
+      <td class="ticker sticky-col">${d.ticker}</td>
       <td><span class="grade" style="background:${d.action.color}22;color:${d.action.color};">${d.action.label}</span></td>
       <td style="font-size:12px;">${d.confidenceLabel}</td>
       <td>${d.composite!=null?d.composite.toFixed(1):'—'}</td>
@@ -4881,7 +4883,7 @@ function renderClosedTrades(){
 
   container.innerHTML = sorted.map(t=>`
     <tr>
-      <td><span class="ticker">${t.ticker}</span>${t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':''}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}</td>
+      <td class="sticky-col"><span class="ticker">${t.ticker}</span>${t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':''}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}</td>
       <td>${t.qty}</td>
       <td>${fmt$(t.cost)}</td>
       <td>${fmt$(t.sellPrice)}</td>
@@ -5386,7 +5388,7 @@ function renderPositions(){
 
     html += `
       <tr class="group-row ${lossAlertHit?'loss-alert-row':''}">
-        <td onclick="toggleGroup('${ticker}')" style="cursor:pointer;">
+        <td class="sticky-col" onclick="toggleGroup('${ticker}')" style="cursor:pointer;">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <span style="display:inline-block;width:14px;transform:rotate(${isExpanded?90:0}deg);">▸</span>
             <span class="ticker">${ticker}</span>
@@ -6571,7 +6573,7 @@ function renderLiquidityCheck(perPosition, totalValue){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th style="cursor:pointer;" onclick="toggleSort('liquidity','ticker',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">代码<span class="sa-liquidity" data-key="ticker"></span></th>
+          <th class="sticky-col" style="cursor:pointer;" onclick="toggleSort('liquidity','ticker',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">代码<span class="sa-liquidity" data-key="ticker"></span></th>
           <th style="cursor:pointer;" onclick="toggleSort('liquidity','qty',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">持仓数量<span class="sa-liquidity" data-key="qty"></span></th>
           <th style="cursor:pointer;" onclick="toggleSort('liquidity','avgVolume',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">20日均量<span class="sa-liquidity" data-key="avgVolume"></span></th>
           <th style="cursor:pointer;" onclick="toggleSort('liquidity','daysToLiquidate',()=>renderLiquidityCheck(liquidityLastArgs.perPosition,liquidityLastArgs.totalValue))">预计平仓天数*<span class="sa-liquidity" data-key="daysToLiquidate"></span></th>
@@ -6583,7 +6585,7 @@ function renderLiquidityCheck(perPosition, totalValue){
           const risk = riskLabel(r.daysToLiquidate);
           return `
             <tr>
-              <td class="ticker">${r.ticker}</td>
+              <td class="ticker sticky-col">${r.ticker}</td>
               <td>${r.qty||'—'}</td>
               <td>${r.avgVolume?Math.round(r.avgVolume).toLocaleString():'—'}</td>
               <td>${r.daysToLiquidate!=null?r.daysToLiquidate+'天':'—'}</td>
@@ -8374,11 +8376,11 @@ function renderDividendReceipts(){
       <span style="color:var(--muted);">共${dividendReceipts.length}笔</span>
     </div>
     <table style="width:100%;border-collapse:collapse;">
-      <thead><tr><th>代码</th><th>到账日期</th><th>金额</th><th>备注</th><th></th></tr></thead>
+      <thead><tr><th class="sticky-col">代码</th><th>到账日期</th><th>金额</th><th>备注</th><th></th></tr></thead>
       <tbody>
         ${dividendReceipts.map((r,idx)=>`
           <tr>
-            <td class="ticker">${r.ticker}</td>
+            <td class="ticker sticky-col">${r.ticker}</td>
             <td class="lang-en">${r.date}</td>
             <td class="pos">${fmt$(r.amount)}</td>
             <td class="lang-en" style="font-family:var(--sans);color:var(--muted);">${escapeHtml(r.note||'')}</td>
@@ -8474,7 +8476,7 @@ function renderDividendTab(){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th onclick="sortDividend('ticker')" style="cursor:pointer;">代码 ${dArrow('ticker')}</th>
+          <th class="sticky-col" onclick="sortDividend('ticker')" style="cursor:pointer;">代码 ${dArrow('ticker')}</th>
           <th onclick="sortDividend('qty')" style="cursor:pointer;">持仓数量 ${dArrow('qty')}</th>
           <th>年化股息/股</th>
           <th onclick="sortDividend('yieldPct')" style="cursor:pointer;">股息率 ${dArrow('yieldPct')}</th>
@@ -8487,7 +8489,7 @@ function renderDividendTab(){
       <tbody>
         ${payingRowsFiltered.map(r=>`
           <tr>
-            <td class="ticker">${r.ticker}</td>
+            <td class="ticker sticky-col">${r.ticker}</td>
             <td>${r.qty}</td>
             <td class="pos">${fmt$(r.d.annualDividend||0)}</td>
             <td class="pos">${(r.d.yieldPct||0).toFixed(1)}%</td>
@@ -8614,7 +8616,7 @@ function renderEarningsTab(){
       <tr><td colspan="5" style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--panel2);">${label}</td></tr>
       ${arr.map(r=>`
         <tr>
-          <td class="ticker">${r.ticker}</td>
+          <td class="ticker sticky-col">${r.ticker}</td>
           <td style="color:${r.daysUntil!==null?urgencyColor(r.daysUntil):'var(--muted)'};">
             ${r.date!=='—'?r.date:'—'}
             ${r.daysUntil!==null&&r.daysUntil>=0?`<span style="font-size:10px;color:${urgencyColor(r.daysUntil)};margin-left:4px;">(${r.daysUntil===0?'今天':r.daysUntil+'天后'})</span>`:''}
@@ -8639,7 +8641,7 @@ function renderEarningsTab(){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th onclick="sortEarnings('ticker')" style="cursor:pointer;">代码 ${eArrow('ticker')}</th>
+          <th class="sticky-col" onclick="sortEarnings('ticker')" style="cursor:pointer;">代码 ${eArrow('ticker')}</th>
           <th onclick="sortEarnings('date')" style="cursor:pointer;">财报日期 ${eArrow('date')}</th>
           <th onclick="sortEarnings('time')" style="cursor:pointer;">时间 ${eArrow('time')}</th>
           <th onclick="sortEarnings('epsEst')" style="cursor:pointer;">EPS预期 ${eArrow('epsEst')}</th>
@@ -8974,7 +8976,7 @@ function renderWatchlist(){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th>代码</th><th>现价</th><th>目标价</th><th>距目标</th><th>备注</th><th>添加时间</th><th></th>
+          <th class="sticky-col">代码</th><th>现价</th><th>目标价</th><th>距目标</th><th>备注</th><th>添加时间</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -8989,7 +8991,7 @@ function renderWatchlist(){
           }
           return `
             <tr>
-              <td class="ticker">${w.ticker}</td>
+              <td class="ticker sticky-col">${w.ticker}</td>
               <td>${price!=null?fmt$(price):'<span class="neu">—</span>'}</td>
               <td>${hasTarget?fmt$(w.targetPrice):'<span class="neu">仅监控</span>'}</td>
               <td>${distance!=null?`<span class="${hit?'pos':'neu'}">${distance>=0?'+':''}${distance.toFixed(1)}%</span>${hit?' <span class="badge-alert" style="background:rgba(34,197,94,0.15);color:var(--green);">🎯 已达标</span>':''}`:'—'}</td>
