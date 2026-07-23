@@ -305,6 +305,8 @@
   }
   #summaryCardsWrap{max-height:600px;overflow:hidden;transition:max-height .25s ease,opacity .2s ease;opacity:1;margin-bottom:0;}
   #summaryCardsWrap.collapsed{max-height:0;opacity:0;pointer-events:none;}
+  #stockTableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  #stockTableWrap table{min-width:760px;}
 </style>
 </head>
 <body>
@@ -429,6 +431,7 @@
         <button class="ghost small" onclick="copyReportToClipboard()">📋 复制 Copy</button>
         <button class="ghost small" onclick="runWithButtonLoading(this,'发送中',sendReportToDiscord)">📨 发送到Discord Send to Discord</button>
         <button class="ghost small" id="dashReportFullscreenBtn" onclick="toggleReportFullscreen()">⛶ 全屏 Fullscreen</button>
+        <button id="dashReportCloseFullscreenBtn" onclick="toggleReportFullscreen()" style="display:none;position:fixed;top:16px;right:16px;z-index:10000;background:var(--red);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:18px;box-shadow:0 2px 10px rgba(0,0,0,.4);">✕</button>
       </div>
       <textarea id="dashReportText" readonly rows="22" style="width:100%;min-height:420px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:14px 16px;font-size:13.5px;line-height:1.7;font-family:var(--mono);resize:vertical;white-space:pre-wrap;" placeholder="点击上方按钮生成晨报或晚报..."></textarea>
     </div>
@@ -864,6 +867,7 @@
               <th onclick="sortHistory('realizedPLPct')" style="cursor:pointer;">盈亏 % <span id="hsort_realizedPLPct"></span></th>
               <th onclick="sortHistory('holdDays')" style="cursor:pointer;">持仓天数 <span id="hsort_holdDays"></span></th>
               <th onclick="sortHistory('sellDate')" style="cursor:pointer;">买入→卖出日期 <span id="hsort_sellDate"></span></th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="closedTradesBody"></tbody>
@@ -1106,6 +1110,56 @@
   </div>
 
 </div><!-- end wrap -->
+
+<!-- Edit Closed Trade Modal -->
+<div class="modal-overlay" id="editTradeModal">
+  <div class="modal" style="max-width:480px;">
+    <h3>✎ 编辑历史交易 / Edit Closed Trade</h3>
+    <div class="hint" style="margin-bottom:12px;">修改后会自动重新计算已实现盈亏、盈亏%与持仓天数。</div>
+    <div class="add-form" style="grid-template-columns:1fr 1fr;gap:10px;">
+      <div>
+        <label>代码 Ticker</label>
+        <input id="editTradeTicker" disabled style="opacity:.6;">
+      </div>
+      <div>
+        <label>数量 Qty</label>
+        <input id="editTradeQty" type="number" step="any">
+      </div>
+      <div>
+        <label>买入价 Cost</label>
+        <input id="editTradeCost" type="number" step="any">
+      </div>
+      <div>
+        <label>卖出价 Sell Price</label>
+        <input id="editTradeSellPrice" type="number" step="any">
+      </div>
+      <div>
+        <label>买入日期 Buy Date</label>
+        <input id="editTradeBuyDate" type="date">
+      </div>
+      <div>
+        <label>卖出日期 Sell Date</label>
+        <input id="editTradeSellDate" type="date">
+      </div>
+      <div>
+        <label>佣金 Commission</label>
+        <input id="editTradeCommission" type="number" step="any">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding-top:20px;">
+        <input id="editTradePartial" type="checkbox" style="width:auto;">
+        <label style="margin:0;">部分平仓 Partial</label>
+      </div>
+    </div>
+    <div style="margin-top:8px;">
+      <label>备注 Note</label>
+      <input id="editTradeNote" type="text">
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" onclick="closeEditClosedTradeModal()">取消</button>
+      <button class="primary" onclick="saveEditClosedTrade()">保存 / Save</button>
+    </div>
+  </div>
+</div>
 
 <!-- Rebalance Targets Modal -->
 <div class="modal-overlay" id="rebalanceModal">
@@ -1976,14 +2030,17 @@ let reportFullscreenOn = false;
 function toggleReportFullscreen(){
   const ta = document.getElementById('dashReportText');
   const btn = document.getElementById('dashReportFullscreenBtn');
+  const closeBtn = document.getElementById('dashReportCloseFullscreenBtn');
   if(!ta) return;
   reportFullscreenOn = !reportFullscreenOn;
   if(reportFullscreenOn){
     ta.classList.add('report-fullscreen');
     if(btn) btn.textContent = '✕ 退出全屏 Exit Fullscreen';
+    if(closeBtn) closeBtn.style.display = 'block';
   } else {
     ta.classList.remove('report-fullscreen');
     if(btn) btn.textContent = '⛶ 全屏 Fullscreen';
+    if(closeBtn) closeBtn.style.display = 'none';
   }
 }
 document.addEventListener('keydown', e=>{
@@ -2837,18 +2894,31 @@ function renderStopEngineTable(){
   }
   const rows = groups.map(g=>stopEngineCache[g.ticker] || { ticker:g.ticker, notyet:true });
 
+  // Display fix: prefer the live quote (quoteCache) for "现价" and all distance-to-stop
+  // calculations. The stop LEVELS themselves (primary/secondary/EMA/ATR/weekly verdict)
+  // are correctly derived from stable daily bars and are left untouched — only the
+  // reference price used for display/comparison is upgraded to a real-time price when
+  // available, since showing yesterday's close as "现价" during market hours is misleading.
+  rows.forEach(r=>{
+    if(r.notyet || r.insufficient) return;
+    const live = quoteCache[r.ticker]?.price;
+    r._displayPrice = (live!=null && live>0) ? live : r.price;
+    r._priceIsLive = (live!=null && live>0);
+  });
+
   const dist = (level, price) => level==null||price==null ? null : (level-price)/price*100;
   rows.forEach(r=>{
-    r._primaryDist = r.primary ? dist(r.primary.value, r.price) : null;
-    r._secondaryDist = r.secondary ? dist(r.secondary.value, r.price) : null;
-    r._emergencyDist = r.emergencyStop!=null ? dist(r.emergencyStop, r.price) : null;
+    const refPrice = r._displayPrice ?? r.price;
+    r._primaryDist = r.primary ? dist(r.primary.value, refPrice) : null;
+    r._secondaryDist = r.secondary ? dist(r.secondary.value, refPrice) : null;
+    r._emergencyDist = r.emergencyStop!=null ? dist(r.emergencyStop, refPrice) : null;
   });
   const rc = stopEngineSort.col, rd = stopEngineSort.dir==='asc'?1:-1;
   rows.sort((a,b)=>{
     if(a.notyet||a.insufficient) return 1;
     if(b.notyet||b.insufficient) return -1;
     if(rc==='ticker') return a.ticker.localeCompare(b.ticker)*rd;
-    if(rc==='price') return ((a.price??-1)-(b.price??-1))*rd;
+    if(rc==='price') return ((a._displayPrice??a.price??-1)-(b._displayPrice??b.price??-1))*rd;
     if(rc==='holdDays') return ((a.holdDays??-1)-(b.holdDays??-1))*rd;
     if(rc==='rMultiple') return ((a.rMultiple??-999)-(b.rMultiple??-999))*rd;
     if(rc==='secondaryDist'){ const va=a._secondaryDist??999, vb=b._secondaryDist??999; return (va-vb)*rd; }
@@ -2868,16 +2938,17 @@ function renderStopEngineTable(){
         <td colspan="11" class="lang-en" style="color:var(--red);">历史数据不足（需≥30个交易日）或获取失败</td></tr>`;
     }
     const wv = weeklyVerdictLabel(s.weeklyVerdict);
-    const primaryDist = dist(s.primary?s.primary.value:null, s.price);
-    const secondaryDist = dist(s.secondary?s.secondary.value:null, s.price);
-    const emergencyDist = dist(s.emergencyStop, s.price);
+    const refPrice = s._displayPrice ?? s.price;
+    const primaryDist = dist(s.primary?s.primary.value:null, refPrice);
+    const secondaryDist = dist(s.secondary?s.secondary.value:null, refPrice);
+    const emergencyDist = dist(s.emergencyStop, refPrice);
     const hint = !s.primary
       ? '🔴 全部技术止损层已跌破'
       : (s.timeStopFlag ? '🟡 时间止损预警' : '✅ 正常');
     const rowHtml = `
     <tr class="rowclick" onclick="toggleStopDetail('${s.ticker}')">
       <td class="ticker">${s.ticker}</td>
-      <td>${fmt$(s.price)}</td>
+      <td>${fmt$(refPrice)}${s._priceIsLive?'<span style="color:var(--green);font-size:10px;" title="实时报价">●实时</span>':'<span style="color:var(--muted);font-size:10px;" title="无实时报价，退回日线收盘价">●收盘</span>'}</td>
       <td>${s.holdDays!=null?s.holdDays+'天':'—'}</td>
       <td class="${s.rMultiple!=null?pclass(s.rMultiple):'neu'}">${s.rMultiple!=null?s.rMultiple.toFixed(1)+'R':'—'}</td>
       <td>${s.primary?fmt$(s.primary.value):'<span style="color:var(--red);">已跌破</span>'}</td>
@@ -4715,6 +4786,71 @@ function sortHistory(col){
   renderClosedTrades();
 }
 
+let editTradeTargetClosedAt = null;
+function editClosedTrade(closedAt){
+  const t = closedTrades.find(x=>x.closedAt===closedAt);
+  if(!t) return;
+  editTradeTargetClosedAt = closedAt;
+  document.getElementById('editTradeTicker').value = t.ticker;
+  document.getElementById('editTradeQty').value = t.qty;
+  document.getElementById('editTradeCost').value = t.cost;
+  document.getElementById('editTradeSellPrice').value = t.sellPrice;
+  document.getElementById('editTradeBuyDate').value = t.buyDate || '';
+  document.getElementById('editTradeSellDate').value = t.sellDate || '';
+  document.getElementById('editTradeCommission').value = t.commission || 0;
+  document.getElementById('editTradePartial').checked = !!t.partial;
+  document.getElementById('editTradeNote').value = t.note || '';
+  document.getElementById('editTradeModal').classList.add('show');
+}
+function closeEditClosedTradeModal(){
+  document.getElementById('editTradeModal').classList.remove('show');
+  editTradeTargetClosedAt = null;
+}
+function saveEditClosedTrade(){
+  const t = closedTrades.find(x=>x.closedAt===editTradeTargetClosedAt);
+  if(!t) return;
+  const qty = parseFloat(document.getElementById('editTradeQty').value);
+  const cost = parseFloat(document.getElementById('editTradeCost').value);
+  const sellPrice = parseFloat(document.getElementById('editTradeSellPrice').value);
+  const buyDate = document.getElementById('editTradeBuyDate').value || null;
+  const sellDate = document.getElementById('editTradeSellDate').value;
+  const commission = parseFloat(document.getElementById('editTradeCommission').value) || 0;
+  if(isNaN(qty) || qty<=0 || isNaN(cost) || cost<=0 || isNaN(sellPrice) || sellPrice<=0 || !sellDate){
+    showToast('请填写有效的数量/买入价/卖出价/卖出日期');
+    return;
+  }
+  t.qty = qty;
+  t.cost = cost;
+  t.sellPrice = sellPrice;
+  t.buyDate = buyDate;
+  t.sellDate = sellDate;
+  t.commission = commission;
+  t.partial = document.getElementById('editTradePartial').checked;
+  t.note = document.getElementById('editTradeNote').value || '';
+  // recompute realized P/L, %, and holding days from the edited fields
+  t.realizedPL = (sellPrice - cost) * qty - commission;
+  t.realizedPLPct = cost>0 ? ((sellPrice - cost)/cost*100) : 0;
+  if(buyDate){
+    const buy = new Date(buyDate), sell = new Date(sellDate);
+    t.holdDays = Math.max(0, Math.round((sell-buy)/(1000*60*60*24)));
+  } else {
+    t.holdDays = null;
+  }
+  saveClosedTrades();
+  renderClosedTrades();
+  closeEditClosedTradeModal();
+  showToast('已更新历史交易记录');
+}
+function deleteClosedTrade(closedAt){
+  const t = closedTrades.find(x=>x.closedAt===closedAt);
+  if(!t) return;
+  if(!confirm(`确定删除这笔 ${t.ticker} 的历史交易记录吗？此操作无法撤销。`)) return;
+  closedTrades = closedTrades.filter(x=>x.closedAt!==closedAt);
+  saveClosedTrades();
+  renderClosedTrades();
+  showToast('已删除该笔记录');
+}
+
 function renderClosedTrades(){
   const container = document.getElementById('closedTradesBody');
   if(!container) return;
@@ -4726,7 +4862,7 @@ function renderClosedTrades(){
   });
 
   if(closedTrades.length===0){
-    container.innerHTML = '<tr><td colspan="8" class="lang-en" style="padding:12px 0;">暂无历史交易记录 / No closed trades yet</td></tr>';
+    container.innerHTML = '<tr><td colspan="9" class="lang-en" style="padding:12px 0;">暂无历史交易记录 / No closed trades yet</td></tr>';
     return;
   }
   const totalRealized = closedTrades.reduce((s,t)=>s+t.realizedPL,0);
@@ -4753,8 +4889,12 @@ function renderClosedTrades(){
       <td class="${pclass(t.realizedPLPct)}">${fmtPct(t.realizedPLPct)}</td>
       <td>${t.holdDays!==null?t.holdDays+'天':'—'}</td>
       <td class="lang-en">${t.buyDate||'—'} → ${t.sellDate}</td>
+      <td style="white-space:nowrap;">
+        <button class="ghost small" style="padding:3px 8px;" onclick="editClosedTrade(${t.closedAt})" title="编辑">✎</button>
+        <button class="ghost small" style="padding:3px 8px;color:var(--red);" onclick="deleteClosedTrade(${t.closedAt})" title="删除">🗑</button>
+      </td>
     </tr>
-  `).join('') || `<tr><td colspan="8" class="lang-en" style="padding:12px;color:var(--muted);">未找到匹配"${searchQ}"的记录</td></tr>`;
+  `).join('') || `<tr><td colspan="9" class="lang-en" style="padding:12px;color:var(--muted);">未找到匹配"${searchQ}"的记录</td></tr>`;
 }
 
 function clearClosedTrades(){
