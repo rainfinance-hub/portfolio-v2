@@ -1644,6 +1644,967 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================================================================
+ * DS —— VectorAlpha 项目综合数据引擎（行情K线/报价 + 基本面/机构持仓，一个文件全包）
+ * ----------------------------------------------------------------------------
+ * 这是 DS_MAX（行情K线：Alpaca→Twelve Data→Polygon.io→Yahoo）和 DS_FUND（基本面：
+ * Finnhub→FMP→Alpha Vantage→SEC EDGAR）合并后的版本，供项目里所有工具（现有的
+ * 四维量化选股/MTF三频共振/index_v2持仓追踪/VectorAlpha长周期系统，以及以后任何
+ * 新工具）共用同一份代码，不用每次新建工具都重新对接一遍这7个数据源。
+ *
+ * 设计取舍：内部仍然是两个独立子模块（_PRICE 管K线/报价，_FUND 管基本面/机构持仓），
+ * 因为这两类数据的形状和使用场景完全不同（K线是逐日/逐小时的时间序列，基本面是
+ * 按股票的单份快照），硬拼成一个函数没有意义，也会增加不必要的改动风险。真正统一
+ * 的是"外壳"：一个 configure() 配置全部7个源的Key，一个 testAll() 看全部7个源的
+ * 健康状态，一个 clearCache() 清空全部缓存——这才是各工具真正需要的"一个模块"。
+ *
+ * 向后兼容：`DS_MAX` 和 `DS_FUND` 这两个名字仍然存在，都指向下面同一个 `DS` 对象，
+ * 所以老代码里所有 `DS_MAX.fetchBars(...)` / `DS_FUND.getFundamentalsBundle(...)`
+ * 这类调用完全不用改一个字——只是现在它们背后是同一份配置、同一份缓存管理。
+ *
+ * 用法（新工具接入时）：
+ *   DS.configure({alpacaKeyId, alpacaSecret, twelveKey, twelvePlan, polygonKey,
+ *                 polygonPlan, finnhubKey, fmpKey, avKey, secUserAgent})
+ *   const bars   = await DS.fetchBars('AAPL', {from, to, limit})
+ *   const quotes = await DS.fetchQuotesBatch(['AAPL','MSFT'])
+ *   const fund   = await DS.getFundamentalsBundle('AAPL')
+ *   const status = await DS.testAll()   // {alpaca,twelve,polygon,yahoo,finnhub,fmp,av,sec}
+ * ==========================================================================*/
+
+/* ============================================================================
+ * DS_MAX — 最强数据源模块（融合 index_v2 / 四维量化选股 / MTF三频共振 三个工具的优点）
+ * ----------------------------------------------------------------------------
+ * 设计目标：扫描"最快最全"。做法是三件事叠加：
+ *
+ *   1) 去掉不必要的中间层：Alpaca 数据接口本身允许浏览器直接跨域调用（四维 /
+ *      index_v2 都是这么用的，且注释明确写了"无CORS问题"）。MTF 里给 Alpaca
+ *      套了一层 Cloudflare Worker 代理——这一步对 Alpaca 来说是多余的，只会
+ *      多一次网络跳转、多一个可能失败的环节、多10分钟部署成本。本模块统一走
+ *      直连，Worker 只保留给"云同步"这种必须要有后端的场景（跟拉价格无关）。
+ *
+ *   2) 三级自动降级 + 批量报价：Alpaca(直连,最快) → Twelve Data(免费额度大,
+ *      20年历史) → Polygon.io(免费额度最小,但有市值排行榜/指数成分股接口，
+ *      三个源里独一份) → Yahoo直连/CORS代理(零Key兜底，专门处理 ^VIX 这类
+ *      Alpaca IEX 免费版不支持的指数代码)。报价场景额外用 Alpaca 的批量
+ *      snapshot 接口（一次最多约100只），比逐只请求快一个数量级。
+ *
+ *   3) 按每个源真实的限流阈值分别调度，而不是所有源统一并发/延迟（这是四维
+ *      V3.2.4 遇到的坑：Alpaca 免费版实测限流比预期严格）。数值来自三个工具
+ *      代码里已经用真实流量验证过的注释：
+ *        - Alpaca:      约 200次/分钟 → 5并发，批间隔 1.2s
+ *        - Twelve 免费: 官方 8次/分钟（不是文档写的225次/分钟那个更宽松的数字，
+ *                       MTF v9 的注释里专门记录了这个教训）→ 串行，间隔 7.5s
+ *        - Twelve 付费: Grow 及以上套餐 → 3并发，间隔 0.8s
+ *        - Polygon 免费: 官方 5次/分钟 → 串行，间隔 13s
+ *        - Polygon 付费: $29/月套餐 → 间隔 0.5s
+ *        - Yahoo/代理:   无官方限制，但保持礼貌间隔 300ms，且只在没有已验证
+ *                       可用的付费/免费Key源時，或者拉取指数代码时才启用
+ *
+ * 使用方法见文件末尾的"集成指南"注释块。
+ * ==========================================================================*/
+
+const _PRICE = (function () {
+  'use strict';
+
+  // ---------------------------------------------------------------------
+  // 配置
+  // ---------------------------------------------------------------------
+  const STORAGE_KEY = 'ds_max_cfg_v1';
+
+  const DEFAULT_CFG = {
+    alpacaKeyId: '',
+    alpacaSecret: '',
+    alpacaEnv: 'paper', // paper | live —— 对 data.alpaca.markets 无影响，仅供UI展示
+    twelveKey: '',
+    twelvePlan: 'free', // free | grow+
+    polygonKey: '',
+    polygonPlan: 'free', // free | paid
+    fmpKey: '', // 仅用于行业分类，非价格数据
+    preferOrder: ['alpaca', 'twelve', 'polygon', 'yahoo'],
+  };
+
+  function loadCfg() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      return Object.assign({}, DEFAULT_CFG, saved);
+    } catch (e) {
+      return Object.assign({}, DEFAULT_CFG);
+    }
+  }
+  function saveCfg(cfg) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+    } catch (e) {}
+  }
+
+  let cfg = loadCfg();
+
+  function configure(partial) {
+    cfg = Object.assign({}, cfg, partial);
+    saveCfg(cfg);
+    return cfg;
+  }
+
+  // ---------------------------------------------------------------------
+  // 每源限流参数（并发数 + 批间隔ms）—— 数值来源见文件头注释
+  // ---------------------------------------------------------------------
+  function rateParams(source) {
+    switch (source) {
+      case 'alpaca':
+        return { concurrency: 5, intervalMs: 1200 };
+      case 'twelve':
+        return cfg.twelvePlan === 'free'
+          ? { concurrency: 1, intervalMs: 7500 }
+          : { concurrency: 3, intervalMs: 800 };
+      case 'polygon':
+        return cfg.polygonPlan === 'free'
+          ? { concurrency: 1, intervalMs: 13000 }
+          : { concurrency: 1, intervalMs: 500 };
+      case 'yahoo':
+        return { concurrency: 3, intervalMs: 300 };
+      default:
+        return { concurrency: 1, intervalMs: 1000 };
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // 极简限流队列：每个源一条队列，按 rateParams 控制并发和最小间隔
+  // ---------------------------------------------------------------------
+  const queues = {};
+  function getQueue(source) {
+    if (!queues[source]) {
+      queues[source] = { running: 0, lastDispatch: 0, pending: [] };
+    }
+    return queues[source];
+  }
+  function schedule(source, fn) {
+    const { concurrency, intervalMs } = rateParams(source);
+    const q = getQueue(source);
+    return new Promise((resolve, reject) => {
+      q.pending.push({ fn, resolve, reject });
+      pump(source, concurrency, intervalMs);
+    });
+  }
+  function pump(source, concurrency, intervalMs) {
+    const q = getQueue(source);
+    if (q.running >= concurrency || q.pending.length === 0) return;
+    const now = Date.now();
+    const wait = Math.max(0, q.lastDispatch + intervalMs / concurrency - now);
+    setTimeout(() => {
+      const task = q.pending.shift();
+      if (!task) return;
+      q.running++;
+      q.lastDispatch = Date.now();
+      task
+        .fn()
+        .then((r) => { q.running--; task.resolve(r); pump(source, concurrency, intervalMs); })
+        .catch((e) => { q.running--; task.reject(e); pump(source, concurrency, intervalMs); });
+      pump(source, concurrency, intervalMs); // 尝试继续填满并发槽位
+    }, wait);
+  }
+
+  // ---------------------------------------------------------------------
+  // 带超时的 fetch + 429 指数退避重试（1s/2s/4s，最多3次）
+  // ---------------------------------------------------------------------
+  function fetchTimeout(url, opts, ms = 12000) {
+    return Promise.race([
+      fetch(url, opts),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+    ]);
+  }
+  async function fetchWithRetry(url, opts, { timeout = 12000, maxRetry = 3 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+      try {
+        const r = await fetchTimeout(url, opts, timeout);
+        if (r.status === 429 && attempt < maxRetry) {
+          await new Promise((res) => setTimeout(res, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        return r;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < maxRetry && String(e.message).includes('timeout')) continue;
+        throw e;
+      }
+    }
+    throw lastErr || new Error('重试耗尽');
+  }
+
+  // ---------------------------------------------------------------------
+  // 健康检测（带30秒缓存，避免每次扫描都重新探测全部源）
+  // ---------------------------------------------------------------------
+  const healthCache = {}; // {alpaca:{ok,ts}, twelve:{...}, polygon:{...}}
+  const HEALTH_TTL = 30000;
+
+  async function testAlpaca() {
+    if (!cfg.alpacaKeyId || !cfg.alpacaSecret) return false;
+    try {
+      const r = await fetchWithRetry(
+        'https://data.alpaca.markets/v2/stocks/AAPL/trades/latest?feed=iex',
+        { headers: { 'APCA-API-KEY-ID': cfg.alpacaKeyId, 'APCA-API-SECRET-KEY': cfg.alpacaSecret } },
+        { timeout: 8000, maxRetry: 0 }
+      );
+      return r.ok;
+    } catch (e) { return false; }
+  }
+  async function testTwelve() {
+    if (!cfg.twelveKey) return false;
+    try {
+      const r = await fetchWithRetry(
+        `https://api.twelvedata.com/price?symbol=AAPL&apikey=${cfg.twelveKey}`,
+        {}, { timeout: 8000, maxRetry: 0 }
+      );
+      const d = await r.json();
+      return !!d.price;
+    } catch (e) { return false; }
+  }
+  async function testPolygon() {
+    if (!cfg.polygonKey) return false;
+    try {
+      const r = await fetchWithRetry(
+        `https://api.polygon.io/v3/reference/tickers/AAPL?apiKey=${cfg.polygonKey}`,
+        {}, { timeout: 8000, maxRetry: 0 }
+      );
+      return r.ok;
+    } catch (e) { return false; }
+  }
+  // Yahoo 永远视为"可用"（零Key兜底），但不参与"优先"排序——只在其他源都失败，
+  // 或者明确请求指数代码（fetchIndexPrice）时才会被用到。
+
+  async function checkHealth(source, force = false) {
+    const c = healthCache[source];
+    if (!force && c && Date.now() - c.ts < HEALTH_TTL) return c.ok;
+    let ok = false;
+    if (source === 'alpaca') ok = await testAlpaca();
+    else if (source === 'twelve') ok = await testTwelve();
+    else if (source === 'polygon') ok = await testPolygon();
+    else if (source === 'yahoo') ok = true;
+    healthCache[source] = { ok, ts: Date.now() };
+    return ok;
+  }
+
+  // 依次探测，返回本轮"全程使用"的数据源名（跟 MTF 的 resolveDataSourceWithFallback
+  // 思路一致：优先用当前配置里排第一的，不可用才降级，避免扫描中途反复横跳）
+  async function resolveSource(preferred) {
+    const order = preferred
+      ? [preferred, ...cfg.preferOrder.filter((s) => s !== preferred)]
+      : cfg.preferOrder;
+    for (const s of order) {
+      if (s === 'yahoo') return 'yahoo'; // 保底，永远可用
+      if (await checkHealth(s)) return s;
+    }
+    return 'yahoo';
+  }
+
+  // ---------------------------------------------------------------------
+  // Alpaca：日线/周线 K 线（直连，不走 Worker）
+  // ---------------------------------------------------------------------
+  async function fetchAlpacaBars(symbol, { from, to, limit = 1000, timeframe = '1Day' } = {}) {
+    return schedule('alpaca', async () => {
+      const params = new URLSearchParams({
+        timeframe, start: from, end: to, limit, feed: 'iex', adjustment: 'split', sort: 'asc',
+      });
+      const url = `https://data.alpaca.markets/v2/stocks/${symbol}/bars?${params}`;
+      const r = await fetchWithRetry(url, {
+        headers: { 'APCA-API-KEY-ID': cfg.alpacaKeyId, 'APCA-API-SECRET-KEY': cfg.alpacaSecret },
+      });
+      if (r.status === 401) throw new Error('401 Alpaca认证失败，请检查Key/Secret');
+      if (!r.ok) throw new Error(`Alpaca HTTP ${r.status}`);
+      const j = await r.json();
+      const bars = j.bars || [];
+      return bars.map((b) => ({
+        t: new Date(b.t).toISOString().split('T')[0],
+        o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0,
+      }));
+    });
+  }
+
+  // Alpaca 批量报价（snapshot，一次最多约100只）—— 来自 index_v2 的做法，
+  // 比逐只请求快一个数量级，适合"只要最新价"的场景（持仓刷新/单股速查）
+  async function fetchAlpacaQuotesBatch(symbols) {
+    const CHUNK = 100;
+    const out = {};
+    for (let i = 0; i < symbols.length; i += CHUNK) {
+      const chunk = symbols.slice(i, i + CHUNK);
+      await schedule('alpaca', async () => {
+        const params = new URLSearchParams({ symbols: chunk.join(','), feed: 'iex' });
+        const url = `https://data.alpaca.markets/v2/stocks/snapshots?${params}`;
+        const r = await fetchWithRetry(url, {
+          headers: { 'APCA-API-KEY-ID': cfg.alpacaKeyId, 'APCA-API-SECRET-KEY': cfg.alpacaSecret },
+        });
+        if (!r.ok) throw new Error(`Alpaca snapshot HTTP ${r.status}`);
+        const data = await r.json();
+        for (const sym of chunk) {
+          const snap = data[sym];
+          if (!snap) continue;
+          const price = snap.latestTrade ? snap.latestTrade.p : null;
+          const prevClose = snap.prevDailyBar ? snap.prevDailyBar.c : null;
+          if (price != null) out[sym] = { price, prevClose };
+        }
+      });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
+  // Twelve Data：日线 K 线 + 单只报价
+  // ---------------------------------------------------------------------
+  async function fetchTwelveBars(symbol, { limit = 500 } = {}) {
+    return schedule('twelve', async () => {
+      const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1day&outputsize=${limit}&order=ASC&apikey=${cfg.twelveKey}`;
+      const r = await fetchWithRetry(url, {});
+      if (!r.ok) throw new Error(`Twelve HTTP ${r.status}`);
+      const data = await r.json();
+      if (data.status === 'error') throw new Error(data.message || 'Twelve Data错误');
+      return (data.values || []).map((v) => ({
+        t: v.datetime.split(' ')[0],
+        o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close),
+        v: parseInt(v.volume) || 0,
+      }));
+    });
+  }
+  async function fetchTwelveQuote(symbol) {
+    return schedule('twelve', async () => {
+      const r = await fetchWithRetry(`https://api.twelvedata.com/price?symbol=${symbol}&apikey=${cfg.twelveKey}`, {});
+      const d = await r.json();
+      if (!d.price) throw new Error('Twelve 无报价');
+      return { price: parseFloat(d.price), prevClose: null };
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Polygon.io：日线 K 线 + 市值排行榜（三个源里独一份的能力，用于自动建池）
+  // ---------------------------------------------------------------------
+  async function fetchPolygonBars(symbol, { from, to, limit = 700 } = {}) {
+    return schedule('polygon', async () => {
+      const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=${limit}&apiKey=${cfg.polygonKey}`;
+      const r = await fetchWithRetry(url, {});
+      if (!r.ok) throw new Error(`Polygon HTTP ${r.status}`);
+      const d = await r.json();
+      if (!d.results || !d.results.length) return [];
+      return d.results.map((x) => ({
+        t: new Date(x.t).toISOString().split('T')[0],
+        o: x.o, h: x.h, l: x.l, c: x.c, v: x.v || 0,
+      }));
+    });
+  }
+
+  // 按市值拉取 Top N 股票代码，用于自动生成扫描股票池——Alpaca/Twelve都没有
+  // 这个免费接口，这是 Polygon 在本模块里被保留的核心理由
+  async function loadUniverseByMarketCap({ exchange = 'ALL', topN = 200 } = {}) {
+    if (!cfg.polygonKey) throw new Error('需要 Polygon.io API Key 才能拉取市值排行榜');
+    return schedule('polygon', async () => {
+      const exchangeParam = exchange === 'ALL' ? 'XNAS,XNYS' : exchange;
+      const url = `https://api.polygon.io/v3/reference/tickers?type=CS&market=stocks&exchange=${exchangeParam}&active=true&sort=market_cap&order=desc&limit=${topN}&apiKey=${cfg.polygonKey}`;
+      const r = await fetchWithRetry(url, {});
+      const d = await r.json();
+      return (d.results || []).map((x) => x.ticker).filter((t) => /^[A-Z]{1,5}$/.test(t));
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Yahoo：直连优先，失败则走 CORS 代理（corsproxy.io / allorigins.win）
+  // 唯一支持指数代码（^VIX / ^GSPC 等），也是零Key兜底
+  // ---------------------------------------------------------------------
+  const PROXIES = ['https://corsproxy.io/?url=', 'https://api.allorigins.win/raw?url='];
+
+  function parseYahoo(j) {
+    if (!j?.chart?.result?.[0]) throw new Error('Yahoo: no data');
+    const res = j.chart.result[0];
+    const q = res.indicators.quote[0];
+    const ts = res.timestamp || [];
+    const meta = res.meta;
+    return {
+      price: meta.regularMarketPrice ?? meta.previousClose,
+      prevClose: meta.chartPreviousClose || meta.previousClose || null,
+      // 原始未过滤数组，长度对齐 ts；null值在 yahooRawToBars 里逐条过滤
+      raw: { close: q.close, high: q.high, low: q.low, volume: q.volume, ts },
+    };
+  }
+
+  function yahooRawToBars(raw) {
+    const { close, high, low, volume, ts } = raw;
+    const bars = [];
+    for (let i = 0; i < ts.length; i++) {
+      if (close[i] == null || high[i] == null || low[i] == null || volume[i] == null) continue;
+      bars.push({
+        t: new Date(ts[i] * 1000).toISOString().split('T')[0],
+        o: close[i], h: high[i], l: low[i], c: close[i], v: volume[i],
+      });
+    }
+    return bars;
+  }
+
+  async function fetchYahooBars(symbol, { from, to } = {}) {
+    const encSym = encodeURIComponent(symbol);
+    const period1 = from ? Math.floor(new Date(from).getTime() / 1000) : Math.floor(Date.now() / 1000) - 86400 * 520;
+    const period2 = to ? Math.floor(new Date(to).getTime() / 1000) + 86400 : Math.floor(Date.now() / 1000);
+    const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encSym}?period1=${period1}&period2=${period2}&interval=1d`;
+
+    return schedule('yahoo', async () => {
+      // 先直连
+      try {
+        const r = await fetchWithRetry(target, { credentials: 'include', headers: { Accept: 'application/json' } }, { maxRetry: 0 });
+        if (r.ok) {
+          const parsed = parseYahoo(await r.json());
+          return { bars: yahooRawToBars(parsed.raw), price: parsed.price, prevClose: parsed.prevClose };
+        }
+      } catch (e) { /* 直连失败，走代理兜底 */ }
+      // 代理兜底（依次尝试，不并发抢，避免把两个免费代理一起打限流）
+      for (const p of PROXIES) {
+        try {
+          const url = p + encodeURIComponent(target);
+          const r = await fetchWithRetry(url, { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }, { maxRetry: 0 });
+          if (!r.ok) continue;
+          let text = await r.text();
+          let j = JSON.parse(text);
+          if (j.contents) j = JSON.parse(j.contents);
+          const parsed = parseYahoo(j);
+          return { bars: yahooRawToBars(parsed.raw), price: parsed.price, prevClose: parsed.prevClose };
+        } catch (e) { /* 尝试下一个代理 */ }
+      }
+      throw new Error('Yahoo 直连+代理均失败');
+    });
+  }
+
+  // 指数代码专用（^VIX 等）：Alpaca IEX 免费版不支持，固定走 Yahoo
+  async function fetchIndexPrice(symbol) {
+    const r = await fetchYahooBars(symbol, {});
+    return r.price;
+  }
+
+  // ---------------------------------------------------------------------
+  // 统一对外接口：fetchBars —— 自动选源、自动降级、内置限流与重试
+  // ---------------------------------------------------------------------
+  const barsCache = {}; // 轻量内存缓存，key = source+symbol+from+to，TTL 5分钟
+  const BARS_CACHE_TTL = 5 * 60 * 1000;
+
+  async function fetchBars(symbol, { from, to, limit = 700, timeframe = '1Day', forceSource } = {}) {
+    // 指数代码强制走 Yahoo（Alpaca/Twelve/Polygon 免费版都不支持 ^ 开头代码）
+    if (symbol.startsWith('^')) {
+      const r = await fetchYahooBars(symbol, { from, to });
+      return r.bars;
+    }
+
+    const cacheKey = `${symbol}|${from}|${to}|${timeframe}`;
+    const cached = barsCache[cacheKey];
+    if (cached && Date.now() - cached.ts < BARS_CACHE_TTL) return cached.data;
+
+    // 非日线粒度（如 1Hour）目前只有 Alpaca 原生支持——Twelve/Polygon/Yahoo 的接口不认
+    // timeframe 参数，请求什么都只会静默返回日线数据。绝不能让它们在这里"降级"进来冒充
+    // 非日线数据（那是错误粒度而不是没有这个数据），所以非日线请求只走 Alpaca，失败就直接
+    // 报错，不做跨源回退（日线场景走下面完整的多源自动降级）。
+    if (timeframe !== '1Day') {
+      const data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
+      if (data && data.length) barsCache[cacheKey] = { data, ts: Date.now() };
+      return data || [];
+    }
+
+    const source = forceSource || (await resolveSource());
+    let data;
+    try {
+      if (source === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
+      else if (source === 'twelve') data = await fetchTwelveBars(symbol, { limit });
+      else if (source === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
+      else data = (await fetchYahooBars(symbol, { from, to })).bars;
+    } catch (e) {
+      // 当前源失败：标记不健康，立刻尝试链上下一个源（不用整场都卡在坏源上）
+      healthCache[source] = { ok: false, ts: Date.now() };
+      const order = cfg.preferOrder.filter((s) => s !== source);
+      for (const next of order) {
+        try {
+          if (next === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
+          else if (next === 'twelve') data = await fetchTwelveBars(symbol, { limit });
+          else if (next === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
+          else data = (await fetchYahooBars(symbol, { from, to })).bars;
+          break;
+        } catch (e2) { continue; }
+      }
+      if (!data) throw new Error(`${symbol}: 所有数据源均失败 — ${e.message}`);
+    }
+
+    if (data && data.length) barsCache[cacheKey] = { data, ts: Date.now() };
+    return data || [];
+  }
+
+  // 批量报价：优先 Alpaca snapshot（一次一大批），否则退化为逐只请求 Twelve/Yahoo
+  async function fetchQuotesBatch(symbols) {
+    const source = await resolveSource();
+    if (source === 'alpaca') {
+      try { return await fetchAlpacaQuotesBatch(symbols); } catch (e) { /* 降级 */ }
+    }
+    const out = {};
+    for (const sym of symbols) {
+      try {
+        if (cfg.twelveKey) out[sym] = await fetchTwelveQuote(sym);
+        else {
+          const r = await fetchYahooBars(sym, {});
+          out[sym] = { price: r.price, prevClose: r.prevClose };
+        }
+      } catch (e) { /* 单只失败跳过，不阻塞其余 */ }
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
+  // 对外暴露
+  // ---------------------------------------------------------------------
+  // 清空本模块内存缓存（健康检测缓存 + K线缓存），供上层"清空全部缓存"按钮调用
+  function clearCache() {
+    Object.keys(healthCache).forEach((k) => delete healthCache[k]);
+    Object.keys(barsCache).forEach((k) => delete barsCache[k]);
+  }
+
+  async function testAll() {
+    const [alpaca, twelve, polygon] = await Promise.all([
+      checkHealth('alpaca', true), checkHealth('twelve', true), checkHealth('polygon', true),
+    ]);
+    return { alpaca, twelve, polygon, yahoo: true };
+  }
+
+  function getStatus() {
+    return { cfg: Object.assign({}, cfg, { alpacaSecret: cfg.alpacaSecret ? '••••' : '' }), health: healthCache };
+  }
+
+  return {
+    configure,
+    getStatus,
+    testAll,
+    resolveSource,
+    fetchBars,
+    fetchQuotesBatch,
+    fetchIndexPrice,
+    loadUniverseByMarketCap,
+    clearCache,
+  };
+})();
+
+const _FUND = (function () {
+  let cfg={finnhubKey:'',fmpKey:'',avKey:'',secUserAgent:''};
+  const MEM={};
+  const PREFIX='dsfund_cache_';
+  const TTL_FUND=24*60*60*1000;
+  const TTL_SECMAP=7*24*60*60*1000;
+  let secTickerMapCache=null;
+
+  function configure(newCfg){ Object.assign(cfg,newCfg||{}); }
+
+  function cGet(key,ttlMs){
+    if(MEM[key]&&(Date.now()-MEM[key].t)<ttlMs)return MEM[key].v;
+    try{
+      const raw=localStorage.getItem(PREFIX+key);
+      if(raw){
+        const rec=JSON.parse(raw);
+        if((Date.now()-rec.t)<ttlMs){MEM[key]=rec;return rec.v;}
+      }
+    }catch(e){}
+    return undefined;
+  }
+  function cSet(key,v){
+    const rec={t:Date.now(),v};
+    MEM[key]=rec;
+    try{localStorage.setItem(PREFIX+key,JSON.stringify(rec));}catch(e){/* 配额溢出忽略持久化，内存缓存仍可用 */}
+  }
+  function clearCache(){
+    Object.keys(localStorage).filter(k=>k.startsWith(PREFIX)).forEach(k=>localStorage.removeItem(k));
+    Object.keys(MEM).forEach(k=>delete MEM[k]);
+    secTickerMapCache=null;
+  }
+
+  async function safeFetch(url,opts,timeoutMs){
+    const ctrl=new AbortController();
+    const tm=setTimeout(()=>ctrl.abort(),timeoutMs||12000);
+    try{
+      const r=await fetch(url,Object.assign({signal:ctrl.signal},opts||{}));
+      clearTimeout(tm);
+      return r;
+    }catch(e){
+      clearTimeout(tm);
+      throw new Error(e.name==='AbortError'?'请求超时':(e.message||'网络错误'));
+    }
+  }
+
+  /* ---------------- Finnhub —— 基本面 / 内部人 / 机构持仓（需要免费 Key） ---------------- */
+  async function finnhubGet(path,params){
+    const key=cfg.finnhubKey;
+    if(!key)return {ok:false,reason:'未配置 Finnhub Key'};
+    const qs=new URLSearchParams(Object.assign({},params,{token:key})).toString();
+    const url=`https://finnhub.io/api/v1${path}?${qs}`;
+    const cacheKey='fh_'+path+'_'+qs.replace(key,'');
+    const hit=cGet(cacheKey,TTL_FUND);
+    if(hit!==undefined)return hit;
+    try{
+      const r=await safeFetch(url,{},10000);
+      if(!r.ok){
+        const reason=r.status===403?'该字段需付费套餐(403)':r.status===429?'请求过于频繁(429)':`HTTP ${r.status}`;
+        return {ok:false,reason}; // 不缓存失败结果，允许下次重试
+      }
+      const j=await r.json();
+      const out={ok:true,data:j};
+      cSet(cacheKey,out);
+      return out;
+    }catch(e){return {ok:false,reason:e.message};}
+  }
+
+  /* ---------------- Financial Modeling Prep —— 基本面 / 机构持仓 / 内部人（需要免费 Key，stable API） ---------------- */
+  async function fmpGet(path,params){
+    const key=cfg.fmpKey;
+    if(!key)return {ok:false,reason:'未配置 FMP Key'};
+    const qs=new URLSearchParams(Object.assign({},params,{apikey:key})).toString();
+    const url=`https://financialmodelingprep.com/stable${path}?${qs}`;
+    const cacheKey='fmp_'+path+'_'+qs.replace(key,'');
+    const hit=cGet(cacheKey,TTL_FUND);
+    if(hit!==undefined)return hit;
+    try{
+      const r=await safeFetch(url,{},10000);
+      if(!r.ok){return {ok:false,reason:`HTTP ${r.status}`};}
+      const j=await r.json();
+      if(j&&j['Error Message'])return {ok:false,reason:j['Error Message']};
+      const out={ok:true,data:j};
+      cSet(cacheKey,out);
+      return out;
+    }catch(e){return {ok:false,reason:e.message};}
+  }
+
+  /* ---------------- Alpha Vantage —— 基本面兜底（免费额度很低，仅作最后兜底，且不做失败重试以节省额度） ---------------- */
+  async function avGet(func,params){
+    const key=cfg.avKey;
+    if(!key)return {ok:false,reason:'未配置 Alpha Vantage Key'};
+    const qs=new URLSearchParams(Object.assign({function:func},params,{apikey:key})).toString();
+    const url=`https://www.alphavantage.co/query?${qs}`;
+    const cacheKey='av_'+func+'_'+qs.replace(key,'');
+    const hit=cGet(cacheKey,TTL_FUND);
+    if(hit!==undefined)return hit;
+    try{
+      const r=await safeFetch(url,{},10000);
+      if(!r.ok)return {ok:false,reason:`HTTP ${r.status}`};
+      const j=await r.json();
+      if(j.Note||j.Information)return {ok:false,reason:'Alpha Vantage 免费额度已用尽'};
+      if(!j||Object.keys(j).length===0)return {ok:false,reason:'返回为空'};
+      const out={ok:true,data:j};
+      cSet(cacheKey,out);
+      return out;
+    }catch(e){return {ok:false,reason:e.message};}
+  }
+
+  /* ---------------- SEC EDGAR —— 官方财报原始字段（不需要Key，但官方要求请求头带联系方式；
+     浏览器不允许脚本自定义 User-Agent，cfg.secUserAgent 仅用于展示合规配置意图，
+     实际请求依赖浏览器默认UA，遵循SEC「非高频调用」的公平使用原则） ---------------- */
+  async function secGetTickerMap(){
+    if(secTickerMapCache)return secTickerMapCache;
+    const hit=cGet('sec_tickermap',TTL_SECMAP);
+    if(hit){secTickerMapCache=hit;return hit;}
+    try{
+      const r=await safeFetch('https://www.sec.gov/files/company_tickers.json',{},15000);
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const j=await r.json();
+      const map={};
+      Object.values(j).forEach(row=>{map[row.ticker.toUpperCase()]=String(row.cik_str).padStart(10,'0');});
+      secTickerMapCache=map;
+      cSet('sec_tickermap',map);
+      return map;
+    }catch(e){
+      log('SEC EDGAR 代码表获取失败：'+e.message,'warn');
+      return {};
+    }
+  }
+  async function secGetFacts(sym){
+    const map=await secGetTickerMap();
+    const cik=map[sym.toUpperCase()];
+    if(!cik)return {ok:false,reason:'SEC 未找到该代码的 CIK'};
+    const cacheKey='sec_facts_'+cik;
+    const hit=cGet(cacheKey,TTL_FUND);
+    if(hit!==undefined)return hit;
+    try{
+      const r=await safeFetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,{},15000);
+      if(!r.ok)return {ok:false,reason:`HTTP ${r.status}`};
+      const j=await r.json();
+      const out={ok:true,data:j};
+      cSet(cacheKey,out);
+      return out;
+    }catch(e){return {ok:false,reason:e.message};}
+  }
+
+  function divOr100(v){return v==null?null:v/100;}
+
+  // 从 SEC XBRL us-gaap 概念中找最近两个「FY」年度值，计算同比增速
+  function secYoYFromConcept(us,conceptNames){
+    for(const name of conceptNames){
+      const c=us[name];
+      if(!c||!c.units)continue;
+      const unitKey=Object.keys(c.units)[0];
+      const arr=(c.units[unitKey]||[]).filter(r=>r.fp==='FY'&&r.form&&r.form.indexOf('10-K')>=0);
+      if(arr.length<2)continue;
+      arr.sort((a,b)=>new Date(b.end)-new Date(a.end));
+      const latest=arr[0],prev=arr.find(r=>r.fy===latest.fy-1)||arr[1];
+      if(latest&&prev&&prev.val)return (latest.val-prev.val)/Math.abs(prev.val);
+    }
+    return null;
+  }
+
+  async function testAll(){
+    return {finnhub:!!cfg.finnhubKey,fmp:!!cfg.fmpKey,av:!!cfg.avKey,sec:true};
+  }
+  function getStatus(){
+    return {cfg:Object.assign({},cfg,{avKey:cfg.avKey?'••••':''})};
+  }
+
+  async function getFundamentalsBundle(sym){
+    const bundle={
+      source:[],warnings:[],raw:{},
+      profile:{sector:null,industry:null,marketCap:null,sharesOut:null},
+      growth:{epsGrowthYoY:null,epsGrowthQoQ:null,epsGrowth3Y:null,revGrowthYoY:null},
+      ratios:{roe:null,roic:null,grossMargin:null,opMargin:null,netMargin:null,debtEquity:null,currentRatio:null,pegRatio:null,forwardPE:null,evEbitda:null,fcf:null},
+      ownership:{institutionalPct:null,institutionalPctPrev:null,insiderNetBuy6m:null,insiderTxCount6m:null},
+    };
+
+    // ---------- Finnhub ----------
+    if(cfg.finnhubKey){
+      try{
+        const prof=await finnhubGet('/stock/profile2',{symbol:sym});
+        if(prof.ok&&prof.data&&prof.data.ticker){
+          bundle.profile.sector=bundle.profile.sector||prof.data.finnhubIndustry||null;
+          bundle.profile.marketCap=bundle.profile.marketCap||(prof.data.marketCapitalization?prof.data.marketCapitalization*1e6:null);
+          bundle.profile.sharesOut=bundle.profile.sharesOut||(prof.data.shareOutstanding?prof.data.shareOutstanding*1e6:null);
+          bundle.raw.finnhub_profile=prof.data;bundle.source.push('Finnhub:profile2');
+        }else if(!prof.ok)bundle.warnings.push('Finnhub profile2: '+prof.reason);
+      }catch(e){bundle.warnings.push('Finnhub profile2 异常: '+e.message);}
+
+      try{
+        const m=await finnhubGet('/stock/metric',{symbol:sym,metric:'all'});
+        if(m.ok&&m.data&&m.data.metric){
+          const d=m.data.metric;
+          const pick=(...keys)=>{for(const k of keys)if(d[k]!=null)return d[k];return null;};
+          bundle.ratios.roe=bundle.ratios.roe??divOr100(pick('roeTTM','roeRfy'));
+          bundle.ratios.roic=bundle.ratios.roic??divOr100(pick('roicTTM'));
+          bundle.ratios.grossMargin=bundle.ratios.grossMargin??divOr100(pick('grossMarginTTM','grossMarginAnnual'));
+          bundle.ratios.opMargin=bundle.ratios.opMargin??divOr100(pick('operatingMarginTTM','operatingMarginAnnual'));
+          bundle.ratios.netMargin=bundle.ratios.netMargin??divOr100(pick('netProfitMarginTTM','netProfitMarginAnnual'));
+          bundle.ratios.debtEquity=bundle.ratios.debtEquity??pick('totalDebt/totalEquityAnnual','totalDebt/totalEquityQuarterly');
+          bundle.ratios.currentRatio=bundle.ratios.currentRatio??pick('currentRatioAnnual','currentRatioQuarterly');
+          bundle.ratios.forwardPE=bundle.ratios.forwardPE??pick('peTTM','peExclExtraTTM','forwardPE');
+          bundle.ratios.pegRatio=bundle.ratios.pegRatio??pick('pegRatio');
+          bundle.growth.epsGrowthYoY=bundle.growth.epsGrowthYoY??divOr100(pick('epsGrowthTTMYoy','epsGrowth5Y'));
+          bundle.growth.revGrowthYoY=bundle.growth.revGrowthYoY??divOr100(pick('revenueGrowthTTMYoy'));
+          bundle.growth.epsGrowth3Y=bundle.growth.epsGrowth3Y??divOr100(pick('epsGrowth3Y','epsGrowth5Y'));
+          bundle.raw.finnhub_metric=d;bundle.source.push('Finnhub:metric');
+        }else if(!m.ok)bundle.warnings.push('Finnhub metric: '+m.reason);
+      }catch(e){bundle.warnings.push('Finnhub metric 异常: '+e.message);}
+
+      try{
+        const ins=await finnhubGet('/stock/insider-transactions',{symbol:sym});
+        if(ins.ok&&ins.data&&Array.isArray(ins.data.data)){
+          const cutoff=Date.now()-180*86400000;
+          let net=0,cnt=0;
+          ins.data.data.forEach(row=>{
+            const t=new Date(row.transactionDate).getTime();
+            if(t<cutoff)return;
+            const shares=(row.change||0);
+            net+=shares;cnt++;
+          });
+          bundle.ownership.insiderNetBuy6m=cnt?net:null;
+          bundle.ownership.insiderTxCount6m=cnt;
+          bundle.raw.finnhub_insider=ins.data.data.slice(0,20);bundle.source.push('Finnhub:insider-transactions');
+        }else if(!ins.ok)bundle.warnings.push('Finnhub insider: '+ins.reason);
+      }catch(e){bundle.warnings.push('Finnhub insider 异常: '+e.message);}
+
+      try{
+        const own=await finnhubGet('/stock/ownership',{symbol:sym,limit:10});
+        if(own.ok&&own.data&&Array.isArray(own.data.ownership)&&own.data.ownership.length){
+          bundle.raw.finnhub_ownership=own.data.ownership;bundle.source.push('Finnhub:ownership(参考)');
+        }else if(!own.ok)bundle.warnings.push('Finnhub 机构持仓(通常需付费): '+own.reason);
+      }catch(e){/* 免费层常见403，静默即可，已有 warnings 兜底 */}
+    }else{
+      bundle.warnings.push('未配置 Finnhub Key，跳过');
+    }
+
+    // ---------- FMP (stable API) ----------
+    if(cfg.fmpKey){
+      try{
+        if(bundle.profile.sector==null||bundle.profile.marketCap==null){
+          const p=await fmpGet('/profile',{symbol:sym});
+          if(p.ok&&Array.isArray(p.data)&&p.data[0]){
+            const d=p.data[0];
+            bundle.profile.sector=bundle.profile.sector||d.sector||null;
+            bundle.profile.industry=bundle.profile.industry||d.industry||null;
+            bundle.profile.marketCap=bundle.profile.marketCap||d.marketCap||null;
+            bundle.profile.sharesOut=bundle.profile.sharesOut||d.sharesOutstanding||null;
+            bundle.raw.fmp_profile=d;bundle.source.push('FMP:profile');
+          }else if(!p.ok)bundle.warnings.push('FMP profile: '+p.reason);
+        }
+      }catch(e){bundle.warnings.push('FMP profile 异常: '+e.message);}
+
+      try{
+        const km=await fmpGet('/key-metrics-ttm',{symbol:sym});
+        if(km.ok&&Array.isArray(km.data)&&km.data[0]){
+          const d=km.data[0];
+          bundle.ratios.roe=bundle.ratios.roe??d.returnOnEquityTTM??null;
+          bundle.ratios.roic=bundle.ratios.roic??d.returnOnInvestedCapitalTTM??null;
+          bundle.ratios.currentRatio=bundle.ratios.currentRatio??d.currentRatioTTM??null;
+          bundle.ratios.pegRatio=bundle.ratios.pegRatio??d.pegRatioTTM??null;
+          bundle.ratios.evEbitda=bundle.ratios.evEbitda??d.evToEBITDATTM??null;
+          bundle.ratios.fcf=bundle.ratios.fcf??d.freeCashFlowPerShareTTM??null;
+          bundle.raw.fmp_keymetrics=d;bundle.source.push('FMP:key-metrics-ttm');
+        }else if(!km.ok)bundle.warnings.push('FMP key-metrics: '+km.reason);
+      }catch(e){bundle.warnings.push('FMP key-metrics 异常: '+e.message);}
+
+      try{
+        const rt=await fmpGet('/ratios-ttm',{symbol:sym});
+        if(rt.ok&&Array.isArray(rt.data)&&rt.data[0]){
+          const d=rt.data[0];
+          bundle.ratios.grossMargin=bundle.ratios.grossMargin??d.grossProfitMarginTTM??null;
+          bundle.ratios.opMargin=bundle.ratios.opMargin??d.operatingProfitMarginTTM??null;
+          bundle.ratios.netMargin=bundle.ratios.netMargin??d.netProfitMarginTTM??null;
+          bundle.ratios.debtEquity=bundle.ratios.debtEquity??d.debtToEquityRatioTTM??null;
+          bundle.ratios.forwardPE=bundle.ratios.forwardPE??d.priceToEarningsRatioTTM??null;
+          bundle.raw.fmp_ratios=d;bundle.source.push('FMP:ratios-ttm');
+        }else if(!rt.ok)bundle.warnings.push('FMP ratios: '+rt.reason);
+      }catch(e){bundle.warnings.push('FMP ratios 异常: '+e.message);}
+
+      try{
+        const g=await fmpGet('/financial-growth',{symbol:sym,period:'annual',limit:4});
+        if(g.ok&&Array.isArray(g.data)&&g.data.length){
+          bundle.growth.epsGrowthYoY=bundle.growth.epsGrowthYoY??g.data[0].epsgrowth??null;
+          bundle.growth.revGrowthYoY=bundle.growth.revGrowthYoY??g.data[0].revenueGrowth??null;
+          if(g.data.length>=3){
+            const eps3=g.data.slice(0,3).map(r=>r.epsgrowth).filter(v=>v!=null);
+            if(eps3.length)bundle.growth.epsGrowth3Y=bundle.growth.epsGrowth3Y??(eps3.reduce((a,b)=>a+b,0)/eps3.length);
+          }
+          bundle.raw.fmp_growth=g.data;bundle.source.push('FMP:financial-growth');
+        }else if(!g.ok)bundle.warnings.push('FMP financial-growth: '+g.reason);
+      }catch(e){bundle.warnings.push('FMP financial-growth 异常: '+e.message);}
+
+      try{
+        const gq=await fmpGet('/financial-growth',{symbol:sym,period:'quarter',limit:1});
+        if(gq.ok&&Array.isArray(gq.data)&&gq.data[0]){
+          bundle.growth.epsGrowthQoQ=gq.data[0].epsgrowth??null;
+          bundle.raw.fmp_growth_q=gq.data[0];bundle.source.push('FMP:financial-growth(季)');
+        }
+      }catch(e){/* 季度数据非关键项，失败静默 */}
+
+      try{
+        const own=await fmpGet('/institutional-ownership/symbol-ownership-percent',{symbol:sym,limit:2});
+        if(own.ok&&Array.isArray(own.data)&&own.data.length){
+          bundle.ownership.institutionalPct=own.data[0].ownershipPercent??own.data[0].investorsHoldingPercent??null;
+          if(own.data.length>1)bundle.ownership.institutionalPctPrev=own.data[1].ownershipPercent??own.data[1].investorsHoldingPercent??null;
+          bundle.raw.fmp_institutional=own.data;bundle.source.push('FMP:institutional-ownership');
+        }else if(!own.ok)bundle.warnings.push('FMP 机构持仓(免费层可能受限): '+own.reason);
+      }catch(e){bundle.warnings.push('FMP 机构持仓异常: '+e.message);}
+
+      try{
+        const ins=await fmpGet('/insider-trading/search',{symbol:sym,limit:50});
+        if(ins.ok&&Array.isArray(ins.data)&&ins.data.length){
+          const cutoff=Date.now()-180*86400000;
+          let net=0,cnt=0;
+          ins.data.forEach(row=>{
+            const t=new Date(row.transactionDate||row.filingDate).getTime();
+            if(isNaN(t)||t<cutoff)return;
+            const shares=(row.securitiesTransacted||0)*(row.acquisitionOrDisposition==='D'?-1:1);
+            net+=shares;cnt++;
+          });
+          if(bundle.ownership.insiderNetBuy6m==null){bundle.ownership.insiderNetBuy6m=cnt?net:null;bundle.ownership.insiderTxCount6m=cnt;}
+          bundle.raw.fmp_insider=ins.data.slice(0,20);bundle.source.push('FMP:insider-trading');
+        }else if(!ins.ok)bundle.warnings.push('FMP insider: '+ins.reason);
+      }catch(e){bundle.warnings.push('FMP insider 异常: '+e.message);}
+    }else{
+      bundle.warnings.push('未配置 FMP Key，跳过');
+    }
+
+    // ---------- Alpha Vantage（免费额度极低，仅兜底缺失字段，不重复请求已获得的字段）----------
+    const stillMissing=[bundle.ratios.roe,bundle.ratios.forwardPE,bundle.ratios.pegRatio,bundle.growth.epsGrowthYoY,bundle.profile.sector].some(v=>v==null);
+    if(cfg.avKey&&stillMissing){
+      try{
+        const ov=await avGet('OVERVIEW',{symbol:sym});
+        if(ov.ok&&ov.data&&ov.data.Symbol){
+          const d=ov.data;
+          const num=v=>(v==null||v==='None'||v==='-')?null:Number(v);
+          bundle.profile.sector=bundle.profile.sector||d.Sector||null;
+          bundle.profile.industry=bundle.profile.industry||d.Industry||null;
+          bundle.profile.marketCap=bundle.profile.marketCap||num(d.MarketCapitalization);
+          bundle.ratios.roe=bundle.ratios.roe??num(d.ReturnOnEquityTTM);
+          bundle.ratios.grossMargin=bundle.ratios.grossMargin??num(d.GrossProfitTTM);
+          bundle.ratios.opMargin=bundle.ratios.opMargin??num(d.OperatingMarginTTM);
+          bundle.ratios.netMargin=bundle.ratios.netMargin??num(d.ProfitMargin);
+          bundle.ratios.forwardPE=bundle.ratios.forwardPE??num(d.ForwardPE)??num(d.PERatio);
+          bundle.ratios.pegRatio=bundle.ratios.pegRatio??num(d.PEGRatio);
+          bundle.ratios.evEbitda=bundle.ratios.evEbitda??num(d.EVToEBITDA);
+          bundle.growth.epsGrowthQoQ=bundle.growth.epsGrowthQoQ??num(d.QuarterlyEarningsGrowthYOY);
+          bundle.growth.revGrowthYoY=bundle.growth.revGrowthYoY??num(d.QuarterlyRevenueGrowthYOY);
+          bundle.raw.av_overview=d;bundle.source.push('AlphaVantage:OVERVIEW');
+        }else if(!ov.ok)bundle.warnings.push('Alpha Vantage: '+ov.reason);
+      }catch(e){bundle.warnings.push('Alpha Vantage 异常: '+e.message);}
+    }
+
+    // ---------- SEC EDGAR 兜底：官方原始 EPS/营收同比（仅在仍缺失时触发，避免不必要的大JSON下载）----------
+    if((bundle.growth.epsGrowthYoY==null||bundle.growth.revGrowthYoY==null)){
+      try{
+        const facts=await secGetFacts(sym);
+        if(facts.ok){
+          const us=facts.data.facts&&facts.data.facts['us-gaap'];
+          if(us){
+            if(bundle.growth.epsGrowthYoY==null){
+              const g=secYoYFromConcept(us,['EarningsPerShareDiluted','EarningsPerShareBasic']);
+              if(g!=null){bundle.growth.epsGrowthYoY=g;bundle.source.push('SEC EDGAR:EPS(原始XBRL)');}
+            }
+            if(bundle.growth.revGrowthYoY==null){
+              const g=secYoYFromConcept(us,['RevenueFromContractWithCustomerExcludingAssessedTax','Revenues','SalesRevenueNet']);
+              if(g!=null){bundle.growth.revGrowthYoY=g;bundle.source.push('SEC EDGAR:Revenue(原始XBRL)');}
+            }
+          }
+        }else bundle.warnings.push('SEC EDGAR: '+facts.reason);
+      }catch(e){bundle.warnings.push('SEC EDGAR 异常: '+e.message);}
+    }
+
+    return bundle;
+  }
+
+  return {configure,getStatus,testAll,getFundamentalsBundle,clearCache};
+})();
+// ============================================================================
+// 组合外壳：把 _PRICE（行情K线/报价）和 _FUND（基本面/机构持仓）拼成一个综合对象 DS，
+// 并把 DS_MAX / DS_FUND 两个名字都指向它，保证任何已有代码的调用方式不用改。
+// ============================================================================
+const DS = (function () {
+  function configure(partial) {
+    partial = partial || {};
+    _PRICE.configure(partial); // 各子模块内部按自己认识的字段名Object.assign，多余字段无害忽略
+    _FUND.configure(partial);
+    return true;
+  }
+
+  async function testAll() {
+    const [p, f] = await Promise.all([_PRICE.testAll(), _FUND.testAll()]);
+    return Object.assign({}, p, f); // {alpaca,twelve,polygon,yahoo,finnhub,fmp,av,sec}
+  }
+
+  function getStatus() {
+    return { price: _PRICE.getStatus(), fundamentals: _FUND.getStatus() };
+  }
+
+  function clearCache() {
+    _PRICE.clearCache();
+    _FUND.clearCache();
+  }
+
+  return {
+    configure,
+    getStatus,
+    testAll,
+    clearCache,
+    resolveSource: _PRICE.resolveSource,
+    fetchBars: _PRICE.fetchBars,
+    fetchQuotesBatch: _PRICE.fetchQuotesBatch,
+    fetchIndexPrice: _PRICE.fetchIndexPrice,
+    loadUniverseByMarketCap: _PRICE.loadUniverseByMarketCap,
+    getFundamentalsBundle: _FUND.getFundamentalsBundle,
+  };
+})();
+
+// 向后兼容别名：老代码里 DS_MAX.xxx(...) / DS_FUND.xxx(...) 完全不用改
+const DS_MAX = DS;
+const DS_FUND = DS;
+
 /* ============== STATE ============== */
 let positions = [];
 let settings = {
@@ -3942,6 +4903,10 @@ function closeSettings(){
 async function saveSettings(){
   settings.apiKeyId = document.getElementById('apiKeyId').value.trim();
   settings.apiSecret = document.getElementById('apiSecret').value.trim();
+  // 同步给DS_MAX（统一数据引擎，跟 四维/MTF 共用），使报价/K线在Alpaca不可用时能自动降级到其他源
+  if(settings.apiKeyId && settings.apiSecret && !settings.apiKeyId.startsWith('🔒')){
+    DS_MAX.configure({alpacaKeyId: settings.apiKeyId, alpacaSecret: settings.apiSecret});
+  }
   settings.fmpKey = document.getElementById('fmpKey').value.trim();
   settings.discordWebhook = document.getElementById('discordWebhook').value.trim();
   settings.priceAlertThresholdPct = parseFloat(document.getElementById('priceAlertThresholdPct').value) || 10;
@@ -5225,7 +6190,6 @@ async function autoCalcAddZone(){
     resultEl.textContent = `= 成本价 ${fmt$(avgCost)} × (1 − ${pct}%)`;
   }
   else if(method==='atr'){
-    if(!settings.apiKeyId || !settings.apiSecret){ showToast('ATR计算需要先配置 Alpaca API'); return; }
     resultEl.textContent = '正在拉取ATR数据...';
     if(!barsCache[ticker] || barsCache[ticker].length<20){
       const bars = await fetchDailyBars(ticker, 60);
@@ -5239,7 +6203,6 @@ async function autoCalcAddZone(){
     resultEl.textContent = `= 成本价 ${fmt$(avgCost)} − ${mult}×ATR(${atr.toFixed(2)})`;
   }
   else if(method==='recent'){
-    if(!settings.apiKeyId || !settings.apiSecret){ showToast('近期支撑位计算需要先配置 Alpaca API'); return; }
     resultEl.textContent = '正在拉取历史数据...';
     const days = parseInt(document.getElementById('tdAddZoneRecentDays').value) || 20;
     if(!barsCache[ticker] || barsCache[ticker].length < days){
@@ -5550,11 +6513,25 @@ function setTakeProfit(id, val){
   if(p){ p.takeProfit = val? parseFloat(val): null; p.slOverride = true; saveState(); renderPositions(); }
 }
 
-/* ============== QUOTES (Alpaca) ============== */
+/* ============== QUOTES (Alpaca优先，DS_MAX统一引擎兜底) ============== */
 async function refreshQuotes(tickers){
   if(!tickers || tickers.length===0) return;
-  if(!settings.apiKeyId || !settings.apiSecret) return;
+  if(!settings.apiKeyId || !settings.apiSecret){
+    // 没配置Alpaca：走DS_MAX统一引擎（自动降级到Twelve Data → Polygon.io → Yahoo），
+    // 拿不到盘前盘后分钟线（extendedHours），但至少还能有报价，不至于完全没数据。
+    try{
+      const quotes = await DS_MAX.fetchQuotesBatch(tickers);
+      for(const ticker of tickers){
+        const q = quotes[ticker];
+        if(q && q.price!=null) quoteCache[ticker] = { price:q.price, prevClose:q.prevClose??null, ts: Date.now() };
+      }
+    }catch(e){ console.warn('DS_MAX quotes fallback failed:', e); }
+    renderPositions();
+    renderSummary();
+    return;
+  }
 
+  // Alpaca支持批量快照(每次最多约100只)，这里保留原实现（含盘前盘后分钟线支持）——
   // Alpaca supports batch snapshots for up to ~100 symbols per call — one request
   // instead of one-per-ticker sequentially. Some symbols (certain ETFs, thinly-traded
   // tickers, or ones IEX simply has no snapshot for) can come back missing even while
@@ -6255,9 +7232,6 @@ async function autoCalcSLTP(positionId){
     profit = basePriceProfit * (1 + pctProfit/100);
   }
   else if(method==='atr'){
-    if(!settings.apiKeyId || !settings.apiSecret){
-      showToast('ATR计算需要先配置 Alpaca API'); return;
-    }
     showToast('正在拉取ATR所需历史数据... Fetching ATR data...');
     if(!barsCache[p.ticker] || barsCache[p.ticker].length<20){
       const bars = await fetchDailyBars(p.ticker, 60);
@@ -6636,7 +7610,14 @@ function updateAutoRefreshStatus(){
 /* ============== EXTENDED HOURS QUOTES ============== */
 // Patch fetchQuote to add extended hours flag when enabled
 async function fetchQuote(ticker){
-  if(!settings.apiKeyId || !settings.apiSecret) return null;
+  if(!settings.apiKeyId || !settings.apiSecret){
+    // 没配置Alpaca：走DS_MAX统一引擎兜底（同 refreshQuotes 的兜底逻辑）
+    try{
+      const quotes = await DS_MAX.fetchQuotesBatch([ticker]);
+      const q = quotes[ticker];
+      return (q && q.price!=null) ? { price:q.price, prevClose:q.prevClose??null, ts: Date.now() } : null;
+    }catch(e){ console.error('DS_MAX quote fallback failed for', ticker, e); return null; }
+  }
   try{
     const base = 'https://data.alpaca.markets/v2/stocks/' + ticker + '/snapshot';
     // NOTE: `extended_hours` is not a documented query param on the snapshot endpoint —
@@ -6705,6 +7686,7 @@ async function decryptApiKeys(pin){
     const { apiKeyId, apiSecret } = JSON.parse(dec.decode(plaintext));
     settings.apiKeyId = apiKeyId;
     settings.apiSecret = apiSecret;
+    DS_MAX.configure({alpacaKeyId: apiKeyId, alpacaSecret: apiSecret});
     persistSettings();
     updateConnStatus();
     showToast('解密成功，API Key已恢复 / Decrypted');
@@ -6720,8 +7702,10 @@ function showPinUnlockPrompt(){
   if(pin) decryptApiKeys(pin);
 }
 
+// 日线K线：统一走 DS_MAX（跟 四维/MTF 共用同一套引擎）。Alpaca优先，不可用时自动
+// 降级到 Twelve Data → Polygon.io → Yahoo，因此哪怕没配置Alpaca Key也能拿到日线数据
+// （ATR/近期支撑位/风险指标等计算不需要Alpaca特有的分钟级/盘前盘后数据，可以放心切源）。
 async function fetchDailyBars(ticker, days=252){
-  if(!settings.apiKeyId || !settings.apiSecret) return null;
   const end = new Date();
   end.setDate(end.getDate() - 1); // free tier lacks real-time access; back off from "now"
   const start = new Date();
@@ -6729,17 +7713,9 @@ async function fetchDailyBars(ticker, days=252){
   const startStr = start.toISOString().split('T')[0];
   const endStr = end.toISOString().split('T')[0];
   try{
-    const url = `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=1Day&start=${startStr}&end=${endStr}&limit=${days}&adjustment=split&feed=iex`;
-    const res = await fetch(url, {
-      headers:{
-        'APCA-API-KEY-ID': settings.apiKeyId,
-        'APCA-API-SECRET-KEY': settings.apiSecret
-      }
-    });
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data = await res.json();
-    if(!data.bars || data.bars.length===0) return null;
-    return data.bars.map(b=>({ t:b.t, c:b.c, h:b.h, l:b.l, v:b.v }));
+    const bars = await DS_MAX.fetchBars(ticker, { from: startStr, to: endStr, limit: days });
+    if(!bars || bars.length===0) return null;
+    return bars.map(b=>({ t:b.t, c:b.c, h:b.h, l:b.l, v:b.v }));
   }catch(e){
     console.error('Bars fetch failed for', ticker, e);
     return null;
@@ -8208,8 +9184,8 @@ async function renderNavVsBenchChart(){
 
   const benchTicker = document.getElementById('navBenchSelect')?.value || 'SPY';
 
-  // fetch benchmark bars if needed
-  if((!barsCache[benchTicker] || barsCache[benchTicker].length<2) && settings.apiKeyId && settings.apiSecret){
+  // fetch benchmark bars if needed（fetchDailyBars已走DS_MAX统一引擎，无需Alpaca也能取到）
+  if(!barsCache[benchTicker] || barsCache[benchTicker].length<2){
     const bars = await fetchDailyBars(benchTicker, 365);
     if(bars) barsCache[benchTicker] = bars;
   }
@@ -8800,7 +9776,6 @@ function renderDrawdownPanel(){
 async function computeCorrelation(){
   const tickers = [...new Set(positions.map(p=>p.ticker))];
   if(tickers.length<2){ showToast('至少需要2只持仓才能计算相关性'); return; }
-  if(!settings.apiKeyId || !settings.apiSecret){ showToast('请先配置Alpaca API'); return; }
 
   showToast('正在拉取历史数据计算相关性...');
   for(const t of tickers){
@@ -9891,6 +10866,11 @@ function exportTaxReport(){
 function init(){
   loadTheme();
   loadState();
+  // 用已保存的Alpaca Key初始化统一数据引擎DS_MAX（跟 四维/MTF 共用同一套引擎，
+  // 报价/K线在Alpaca不可用或未配置时自动降级到Twelve Data → Polygon.io → Yahoo）
+  if(settings.apiKeyId && settings.apiSecret && !settings.apiKeyId.startsWith('🔒')){
+    DS_MAX.configure({alpacaKeyId: settings.apiKeyId, alpacaSecret: settings.apiSecret});
+  }
   loadSectorCache();
   loadAlertLog();
   loadClosedTrades();
