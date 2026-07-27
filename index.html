@@ -714,7 +714,7 @@
         两者都没有的持仓计入"未知风险"，不纳入使用率（因为无法估算，不代表零风险）。
       </p>
       <div class="summary-grid" id="riskBudgetCards">
-        <div class="card"><div class="card-label">组合风险预算</div><div class="card-value neu">100%</div></div>
+        <div class="card"><div class="card-label">组合风险预算上限</div><div class="card-value neu">6%</div></div>
         <div class="card"><div class="card-label">已用 Used</div><div class="card-value neu">—</div></div>
         <div class="card"><div class="card-label">剩余 Remaining</div><div class="card-value neu">—</div></div>
         <div class="card"><div class="card-label">未知风险持仓</div><div class="card-value neu">—</div></div>
@@ -1468,6 +1468,11 @@
       <div class="hint">⚠ 止盈默认用成本价：确保触发时相对你的买入成本真正是盈利。若改用市价，在深度亏损持仓上可能出现"止盈价低于成本价"、触发时实际是亏损离场的情况。</div>
     </div>
     <div class="field">
+      <label>组合风险预算上限 Max Portfolio Risk Budget (%)</label>
+      <input id="maxPortfolioRiskPct" type="number" step="0.5" min="0.5" max="20">
+      <div class="hint">"风险指标"Tab里"组合风险预算"的计算基准——即所有持仓若同时跌到各自止损位，允许亏损的账户净值百分比上限。机构常用范围3-8%，而非把组合总市值当作100%基准。</div>
+    </div>
+    <div class="field">
       <label>五层止损引擎 · 默认策略周期 Default Strategy Profile</label>
       <div class="hint" style="margin-bottom:8px;">决定"风险指标"Tab里，主止损从五层里的哪几层挑选、结构止损回看窗口天数、时间止损阈值。每只股票可在"该股设置"里单独覆盖此全局默认值。</div>
       <select id="defaultStopProfile">
@@ -1845,7 +1850,7 @@ const _PRICE = (function () {
   const queues = {};
   function getQueue(source) {
     if (!queues[source]) {
-      queues[source] = { running: 0, lastDispatch: 0, pending: [] };
+      queues[source] = { running: 0, scheduled: 0, lastDispatch: 0, pending: [] };
     }
     return queues[source];
   }
@@ -1859,14 +1864,24 @@ const _PRICE = (function () {
   }
   function pump(source, concurrency, intervalMs) {
     const q = getQueue(source);
-    if (q.running >= concurrency || q.pending.length === 0) return;
+    // BUGFIX: previously checked `q.running >= concurrency` here, but `q.running`
+    // was only incremented INSIDE the setTimeout callback below — meaning several
+    // synchronous schedule() calls made before any timer fires would all see
+    // q.running===0 and each schedule their own timer, letting more requests
+    // through than `concurrency` actually allows. Now reserves a slot via
+    // q.scheduled immediately (before the timer fires), so concurrent schedule()
+    // calls correctly see the slot as taken.
+    q.scheduled = q.scheduled ?? 0;
+    if (q.running + q.scheduled >= concurrency || q.pending.length === 0) return;
+    q.scheduled++;
     const now = Date.now();
     const wait = Math.max(0, q.lastDispatch + intervalMs / concurrency - now);
+    q.lastDispatch = now + wait;
     setTimeout(() => {
+      q.scheduled--;
       const task = q.pending.shift();
-      if (!task) return;
+      if (!task) { pump(source, concurrency, intervalMs); return; }
       q.running++;
-      q.lastDispatch = Date.now();
       task
         .fn()
         .then((r) => { q.running--; task.resolve(r); pump(source, concurrency, intervalMs); })
@@ -1879,10 +1894,14 @@ const _PRICE = (function () {
   // 带超时的 fetch + 429 指数退避重试（1s/2s/4s，最多3次）
   // ---------------------------------------------------------------------
   function fetchTimeout(url, opts, ms = 12000) {
-    return Promise.race([
-      fetch(url, opts),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
-    ]);
+    // BUGFIX: previously used Promise.race([fetch(url,opts), timeoutPromise]) —
+    // when the timeout won the race, the original fetch() call kept running in
+    // the background with no way to cancel it. A subsequent retry then had two
+    // requests in flight for the same call, wasting quota and risking extra 429s.
+    // Now uses AbortController so a real timeout actually cancels the request.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
   }
   async function fetchWithRetry(url, opts, { timeout = 12000, maxRetry = 3 } = {}) {
     let lastErr;
@@ -1896,7 +1915,11 @@ const _PRICE = (function () {
         return r;
       } catch (e) {
         lastErr = e;
-        if (attempt < maxRetry && String(e.message).includes('timeout')) continue;
+        // BUGFIX: AbortController-based timeouts throw a DOMException with
+        // name 'AbortError' (message doesn't contain "timeout"), so the retry
+        // condition must check e.name too, not just the message string.
+        const isTimeout = e.name === 'AbortError' || String(e.message).includes('timeout');
+        if (attempt < maxRetry && isTimeout) continue;
         throw e;
       }
     }
@@ -2091,18 +2114,25 @@ const _PRICE = (function () {
       price: meta.regularMarketPrice ?? meta.previousClose,
       prevClose: meta.chartPreviousClose || meta.previousClose || null,
       // 原始未过滤数组，长度对齐 ts；null值在 yahooRawToBars 里逐条过滤
-      raw: { close: q.close, high: q.high, low: q.low, volume: q.volume, ts },
+      raw: { open: q.open, close: q.close, high: q.high, low: q.low, volume: q.volume, ts },
     };
   }
 
   function yahooRawToBars(raw) {
-    const { close, high, low, volume, ts } = raw;
+    const { open, close, high, low, volume, ts } = raw;
     const bars = [];
     for (let i = 0; i < ts.length; i++) {
-      if (close[i] == null || high[i] == null || low[i] == null || volume[i] == null) continue;
+      // BUGFIX: previously required volume[i]!=null too, which silently dropped
+      // otherwise-valid price bars for tickers/indices where Yahoo sometimes
+      // omits volume (common for certain ETFs/indices) — price data itself was
+      // fine and shouldn't have been discarded. Volume now defaults to 0 instead.
+      if (close[i] == null || high[i] == null || low[i] == null) continue;
       bars.push({
         t: new Date(ts[i] * 1000).toISOString().split('T')[0],
-        o: close[i], h: high[i], l: low[i], c: close[i], v: volume[i],
+        // BUGFIX: previously used close[i] as open too (o: close[i]), silently
+        // collapsing every bar's real body/gap information. Now uses the actual
+        // open field from Yahoo, falling back to close only if open is missing.
+        o: open[i]!=null ? open[i] : close[i], h: high[i], l: low[i], c: close[i], v: volume[i] ?? 0,
       });
     }
     return bars;
@@ -2159,22 +2189,32 @@ const _PRICE = (function () {
       return r.bars;
     }
 
-    const cacheKey = `${symbol}|${from}|${to}|${timeframe}`;
-    const cached = barsCache[cacheKey];
-    if (cached && Date.now() - cached.ts < BARS_CACHE_TTL) return cached.data;
-
-    // 非日线粒度（如 1Hour）目前只有 Alpaca 原生支持——Twelve/Polygon/Yahoo 的接口不认
-    // timeframe 参数，请求什么都只会静默返回日线数据。绝不能让它们在这里"降级"进来冒充
-    // 非日线数据（那是错误粒度而不是没有这个数据），所以非日线请求只走 Alpaca，失败就直接
-    // 报错，不做跨源回退（日线场景走下面完整的多源自动降级）。
+    // BUGFIX: cache key previously didn't include the data source at all
+    // (`${symbol}|${from}|${to}|${timeframe}`) — if the resolved source changed
+    // between two calls within the cache TTL window (e.g. Alpaca briefly marked
+    // unhealthy → fell back to Yahoo → Alpaca recovered), the second call could
+    // silently be served the first call's Yahoo-sourced bars while believing it
+    // was reading fresh Alpaca data. The key now always includes the source that
+    // actually produced the cached data.
     if (timeframe !== '1Day') {
+      // 非日线粒度（如 1Hour）目前只有 Alpaca 原生支持——Twelve/Polygon/Yahoo 的接口不认
+      // timeframe 参数，请求什么都只会静默返回日线数据。绝不能让它们在这里"降级"进来冒充
+      // 非日线数据（那是错误粒度而不是没有这个数据），所以非日线请求只走 Alpaca，失败就直接
+      // 报错，不做跨源回退（日线场景走下面完整的多源自动降级）。
+      const cacheKey = `alpaca|${symbol}|${from}|${to}|${timeframe}`;
+      const cached = barsCache[cacheKey];
+      if (cached && Date.now() - cached.ts < BARS_CACHE_TTL) return cached.data;
       const data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
       if (data && data.length) barsCache[cacheKey] = { data, ts: Date.now() };
       return data || [];
     }
 
-    const source = forceSource || (await resolveSource());
-    let data;
+    const intendedSource = forceSource || (await resolveSource());
+    const intendedCacheKey = `${intendedSource}|${symbol}|${from}|${to}|${timeframe}`;
+    const cachedIntended = barsCache[intendedCacheKey];
+    if (cachedIntended && Date.now() - cachedIntended.ts < BARS_CACHE_TTL) return cachedIntended.data;
+
+    let source = intendedSource, data;
     try {
       if (source === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
       else if (source === 'twelve') data = await fetchTwelveBars(symbol, { limit });
@@ -2184,19 +2224,22 @@ const _PRICE = (function () {
       // 当前源失败：标记不健康，立刻尝试链上下一个源（不用整场都卡在坏源上）
       healthCache[source] = { ok: false, ts: Date.now() };
       const order = cfg.preferOrder.filter((s) => s !== source);
+      let fellBackTo = null;
       for (const next of order) {
         try {
           if (next === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
           else if (next === 'twelve') data = await fetchTwelveBars(symbol, { limit });
           else if (next === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
           else data = (await fetchYahooBars(symbol, { from, to })).bars;
+          fellBackTo = next;
           break;
         } catch (e2) { continue; }
       }
       if (!data) throw new Error(`${symbol}: 所有数据源均失败 — ${e.message}`);
+      if (fellBackTo) source = fellBackTo; // 缓存键要反映真正提供数据的源，不是最初打算用的源
     }
 
-    if (data && data.length) barsCache[cacheKey] = { data, ts: Date.now() };
+    if (data && data.length) barsCache[`${source}|${symbol}|${from}|${to}|${timeframe}`] = { data, ts: Date.now() };
     return data || [];
   }
 
@@ -2686,6 +2729,7 @@ let settings = {
   priceAlertThresholdPct: 10, // send Discord alert if price moves >X% from prevClose
   earningsAlertDays: 2,       // send Discord alert X days before earnings
   cashBalance: 0,             // cash / buying power not invested in positions
+  maxPortfolioRiskPct: 6, // 组合风险预算上限（占账户净值%），专业惯例通常3-8%，而非把总市值当100%基准
   defaultStopProfile:'swing',
   slMethod:'pct', slBasisStop:'market', slBasisProfit:'cost', slPctStop:8, slPctProfit:20,
   slAtrStopMult:2, slAtrProfitMult:3, slRecentDays:20,
@@ -2738,7 +2782,7 @@ function saveRiskHistory(){
   localStorage.setItem(RISK_HISTORY_KEY, JSON.stringify(riskHistory));
 }
 function recordRiskSnapshot(beta, vol, sharpe, sortino, maxDD){
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const idx = riskHistory.findIndex(r=>r.date===today);
   const entry = { date:today, beta, vol, sharpe, sortino, maxDD };
   if(idx>=0) riskHistory[idx] = entry;
@@ -2759,7 +2803,7 @@ function saveNavSnapshots(){
 }
 function recordNavSnapshot(totalValue){
   if(!totalValue || totalValue<=0) return;
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const idx = navSnapshots.findIndex(s=>s.date===today);
   if(idx>=0) navSnapshots[idx].value = totalValue;
   else navSnapshots.push({ date:today, value:totalValue });
@@ -3121,7 +3165,19 @@ function saveStockBarsCache(){
     try{ localStorage.setItem(STOCK_BARS_KEY, JSON.stringify(stockBarsCache)); }catch(e2){}
   }
 }
-function todayStr(){ return new Date().toISOString().split('T')[0]; }
+// BUGFIX: previously `todayStr()` — toISOString()
+// always uses UTC, not the browser's local time or the market's time zone. In
+// US Eastern evenings (after ~7-8pm ET depending on DST), UTC has already
+// rolled over to the next calendar day while it's still "today" in the market
+// — this could make same-day dedup checks (decision history, portfolio
+// timeline, K线/止损缓存 etc.) think a new day had started when it hadn't,
+// splitting one day's data across two dates. Now uses America/New_York
+// explicitly regardless of the browser's own local time zone.
+function todayStr(){
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
 let reportFullscreenOn = false;
 function toggleReportFullscreen(){
   const ta = document.getElementById('dashReportText');
@@ -3930,11 +3986,21 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
   // stock — e.g. price 100→90→80 dragged the floor from 84→74→64 with it,
   // so it could never actually trigger during a real decline. Anchoring to
   // the peak-since-entry makes it move only upward, like a true last resort.
-  const emergencyByAtr = atr!=null ? highestCloseSinceEntry - 4*atr : null;
+  const rawEmergencyByAtr = atr!=null ? highestCloseSinceEntry - 4*atr : null;
+  // BUGFIX: anchoring to highestCloseSinceEntry (above) already stops this from
+  // retreating when PRICE falls, but it could still fall if ATR itself expands
+  // between two calculation runs — the exact same gap that was fixed for the
+  // ATR trailing stop (layer 2) but had not yet been applied here. Now compares
+  // against the last cached value too, so it truly never moves down.
+  const prevEmergencyStop = (prevEntry && !prevEntry.insufficient && prevEntry.emergencyStop!=null)
+    ? prevEntry.emergencyStop : null;
+  const emergencyByAtr = (rawEmergencyByAtr!=null && prevEmergencyStop!=null)
+    ? Math.max(rawEmergencyByAtr, prevEmergencyStop)
+    : rawEmergencyByAtr;
   let emergencyStop = null, emergencyReason = '数据不足，无法计算紧急止损';
   if(emergencyByPct!=null && emergencyByAtr!=null){
     emergencyStop = Math.min(emergencyByPct, emergencyByAtr);
-    emergencyReason = `取"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})与"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})两者中更低者，作为不计较入场逻辑、任何情况下都必须离场的最终防线（锚定最高收盘价，只随新高上移，不随现价下跌而后退）`;
+    emergencyReason = `取"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})与"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})两者中更低者，作为不计较入场逻辑、任何情况下都必须离场的最终防线（锚定最高收盘价且与上次已锁定值比较取更高者，只升不降）`;
   } else if(emergencyByPct!=null){
     emergencyStop = emergencyByPct;
     emergencyReason = `ATR数据不足，采用"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})作为紧急止损`;
@@ -5016,6 +5082,7 @@ function openSettings(){
   document.getElementById('earningsAlertDays').value = settings.earningsAlertDays || 2;
   document.getElementById('apiEnv').value = settings.apiEnv;
   document.getElementById('benchmarkTicker').value = settings.benchmarkTicker;
+  document.getElementById('maxPortfolioRiskPct').value = settings.maxPortfolioRiskPct ?? 6;
   document.getElementById('defaultStopProfile').value = settings.defaultStopProfile || 'swing';
   document.getElementById('slMethod').value = settings.slMethod;
   document.getElementById('slBasisStop').value = settings.slBasisStop ?? settings.slBasis ?? 'market';
@@ -5070,6 +5137,7 @@ async function saveSettings(){
   settings.earningsAlertDays = parseInt(document.getElementById('earningsAlertDays').value) || 2;
   settings.apiEnv = document.getElementById('apiEnv').value;
   settings.benchmarkTicker = document.getElementById('benchmarkTicker').value.trim().toUpperCase() || 'SPY';
+  settings.maxPortfolioRiskPct = parseFloat(document.getElementById('maxPortfolioRiskPct').value) || 6;
   settings.defaultStopProfile = document.getElementById('defaultStopProfile').value;
   settings.slMethod = document.getElementById('slMethod').value;
   settings.slBasisStop = document.getElementById('slBasisStop').value;
@@ -5689,10 +5757,22 @@ function computeRiskBudget(){
       riskPctOfTotal: riskAmount!=null ? riskAmount/total*100 : null
     };
   });
-  const usedPct = total>0 ? (usedRisk/total*100) : 0;
+  const usedPct = total>0 ? (usedRisk/total*100) : 0; // 已用风险占组合总值%（次要参考指标）
+  // BUGFIX: previously framed the entire portfolio value as the "100%" budget
+  // denominator, so "used 4%, remaining 96%" made it look like there was huge
+  // spare capacity when a professional risk budget would already be flagging
+  // concern. Now benchmarks against a configurable ceiling (settings.
+  // maxPortfolioRiskPct, default 6% of account equity — a common institutional
+  // range is 3-8%), matching how real risk budgets are actually framed.
+  const riskBudgetPct = settings.maxPortfolioRiskPct ?? 6;
+  const riskBudgetAmount = total * riskBudgetPct / 100;
+  const utilizationPct = riskBudgetAmount>0 ? (usedRisk/riskBudgetAmount*100) : 0;
+  const remainingRiskAmount = Math.max(0, riskBudgetAmount - usedRisk);
   return {
     rows: rows.sort((a,b)=>(b.riskPctOfTotal??-1)-(a.riskPctOfTotal??-1)),
-    usedRisk, usedPct, remainingPct: Math.max(0, 100-usedPct), total, unknownCount
+    usedRisk, usedPct, total, unknownCount,
+    riskBudgetPct, riskBudgetAmount, utilizationPct, remainingRiskAmount,
+    remainingPct: Math.max(0, 100-utilizationPct), // 保留字段名以兼容既有调用，含义现在是"预算剩余使用率%"
   };
 }
 function renderRiskBudget(){
@@ -5701,19 +5781,20 @@ function renderRiskBudget(){
   if(!cardsEl || !bodyEl) return;
   const rb = computeRiskBudget();
   if(!rb){
+    const budgetPct = settings.maxPortfolioRiskPct ?? 6;
     cardsEl.innerHTML = `
-      <div class="card"><div class="card-label">组合风险预算</div><div class="card-value neu">100%</div></div>
+      <div class="card"><div class="card-label">组合风险预算上限</div><div class="card-value neu">${budgetPct}%</div><div class="card-sub neu">账户净值</div></div>
       <div class="card"><div class="card-label">已用 Used</div><div class="card-value neu">—</div></div>
       <div class="card"><div class="card-label">剩余 Remaining</div><div class="card-value neu">—</div></div>
       <div class="card"><div class="card-label">未知风险持仓</div><div class="card-value neu">—</div></div>`;
     bodyEl.innerHTML = '<tr><td colspan="6" class="lang-en" style="padding:16px;">暂无持仓</td></tr>';
     return;
   }
-  const usedColor = rb.usedPct>=80 ? 'var(--red)' : (rb.usedPct>=50 ? 'var(--amber)' : 'var(--green)');
+  const usedColor = rb.utilizationPct>=80 ? 'var(--red)' : (rb.utilizationPct>=50 ? 'var(--amber)' : 'var(--green)');
   cardsEl.innerHTML = `
-    <div class="card"><div class="card-label">组合风险预算</div><div class="card-value neu">100%</div></div>
-    <div class="card"><div class="card-label">已用 Used</div><div class="card-value" style="color:${usedColor};">${rb.usedPct.toFixed(1)}%</div><div class="card-sub neu">${fmt$(rb.usedRisk)}</div></div>
-    <div class="card"><div class="card-label">剩余 Remaining</div><div class="card-value pos">${rb.remainingPct.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-label">组合风险预算上限</div><div class="card-value neu">${rb.riskBudgetPct}%</div><div class="card-sub neu">= ${fmt$(rb.riskBudgetAmount)}（账户净值${rb.riskBudgetPct}%，可在设置中调整）</div></div>
+    <div class="card"><div class="card-label">已用 Used（占预算）</div><div class="card-value" style="color:${usedColor};">${rb.utilizationPct.toFixed(1)}%</div><div class="card-sub neu">${fmt$(rb.usedRisk)}（占组合总值${rb.usedPct.toFixed(2)}%）</div></div>
+    <div class="card"><div class="card-label">剩余预算 Remaining</div><div class="card-value pos">${fmt$(rb.remainingRiskAmount)}</div><div class="card-sub neu">${rb.remainingPct.toFixed(1)}% 预算额度</div></div>
     <div class="card"><div class="card-label">未知风险持仓</div><div class="card-value ${rb.unknownCount>0?'neg':'pos'}">${rb.unknownCount}</div><div class="card-sub neu">未计算止损/无手动止损</div></div>
   `;
   bodyEl.innerHTML = rb.rows.map(r=>`
@@ -5750,13 +5831,17 @@ function previewRiskBudget(){
   const newRisk = (entry-stop)*qty;
   const newCost = entry*qty;
   const newTotal = total + newCost; // approximate post-trade portfolio value
-  const newRiskPct = newTotal>0 ? newRisk/newTotal*100 : null;
-  const combinedUsedPct = (rb && newTotal>0) ? ((rb.usedRisk+newRisk)/newTotal*100) : newRiskPct;
-  const color = combinedUsedPct>=80 ? 'var(--red)' : (combinedUsedPct>=50 ? 'var(--amber)' : 'var(--green)');
+  const riskBudgetPct = settings.maxPortfolioRiskPct ?? 6;
+  const riskBudgetAmount = newTotal * riskBudgetPct / 100;
+  const existingUsedRisk = rb ? rb.usedRisk : 0;
+  const combinedUsedRisk = existingUsedRisk + newRisk;
+  const combinedUtilizationPct = riskBudgetAmount>0 ? (combinedUsedRisk/riskBudgetAmount*100) : null;
+  const newRiskCostPct = riskBudgetAmount>0 ? (newRisk/riskBudgetAmount*100) : null;
+  const color = combinedUtilizationPct>=80 ? 'var(--red)' : (combinedUtilizationPct>=50 ? 'var(--amber)' : 'var(--green)');
   resEl.innerHTML = `
-    这笔交易本身风险占用：<b>${fmt$(newRisk)}</b>（占预计组合总值 ${newRiskPct!=null?newRiskPct.toFixed(2)+'%':'—'}）<br>
-    加上现有持仓后，组合风险预算使用率将变为：<b style="color:${color};">${combinedUsedPct!=null?combinedUsedPct.toFixed(1)+'%':'—'}</b>
-    ${combinedUsedPct!=null&&combinedUsedPct>=80?'　⚠ 已接近/超过风险预算上限，建议缩小仓位或收紧止损':''}
+    这笔交易本身风险占用：<b>${fmt$(newRisk)}</b>（消耗预算${newRiskCostPct!=null?newRiskCostPct.toFixed(1)+'%':'—'}，预算上限=${fmt$(riskBudgetAmount)} = 账户净值${riskBudgetPct}%）<br>
+    加上现有持仓后，组合风险预算使用率将变为：<b style="color:${color};">${combinedUtilizationPct!=null?combinedUtilizationPct.toFixed(1)+'%':'—'}</b>
+    ${combinedUtilizationPct!=null&&combinedUtilizationPct>=80?'　⚠ 已接近/超过风险预算上限，建议缩小仓位或收紧止损':''}
   `;
 }
 
@@ -6211,7 +6296,7 @@ function addPosition(){
   const tagsRaw = document.getElementById('inpTags').value.trim();
   const tags = tagsRaw ? tagsRaw.split(',').map(t=>t.trim()).filter(Boolean) : [];
   const dateVal = document.getElementById('inpDate').value;
-  const buyDate = dateVal || new Date().toISOString().split('T')[0];
+  const buyDate = dateVal || todayStr();
 
   if(!ticker){ showToast('请输入代码 / Enter a ticker'); return; }
   if(!qty || qty<=0){ showToast('请输入有效数量 / Enter valid quantity'); return; }
@@ -6478,7 +6563,7 @@ function removePosition(id){
   document.getElementById('closeSellQty').max = p.qty;
   document.getElementById('closeQtyHint').textContent = `该笔最多可卖出 ${p.qty} 股`;
   document.getElementById('closeSellPrice').value = currentPrice.toFixed(2);
-  document.getElementById('closeSellDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('closeSellDate').value = todayStr();
   document.getElementById('closeModal').classList.add('show');
 }
 
@@ -6494,7 +6579,7 @@ function confirmClosePosition(){
 
   const sellQty = parseFloat(document.getElementById('closeSellQty').value);
   const sellPrice = parseFloat(document.getElementById('closeSellPrice').value);
-  const sellDate = document.getElementById('closeSellDate').value || new Date().toISOString().split('T')[0];
+  const sellDate = document.getElementById('closeSellDate').value || todayStr();
   const commission = parseFloat(document.getElementById('closeCommission').value) || 0;
 
   if(!sellPrice || sellPrice<=0){ showToast('请输入有效卖出价'); return; }
@@ -8869,7 +8954,7 @@ function playAlertSound(){
 
 function processAlerts(triggered){
   triggered.forEach(async a=>{
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayStr();
     // Session dedup key (prevents same trigger firing multiple times in one render)
     const sessionKey = `${a.id}-${a.type}-${a.target}`;
     if(notifiedAlertKeys.has(sessionKey)) return;
@@ -10339,7 +10424,7 @@ function renderEarningsTab(){
   if(positions.length===0){ el.innerHTML='<div style="color:var(--muted);">暂无持仓</div>'; return; }
 
   const tickers = [...new Set(positions.map(p=>p.ticker))];
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const earningsSearchQ = panelSearchQuery.earnings;
   const filteredTickers = earningsSearchQ ? tickers.filter(t=>t.includes(earningsSearchQ)) : tickers;
 
@@ -10489,7 +10574,7 @@ function formKeyNav(e, nextId){
 function setTodayDate(){
   const el = document.getElementById('inpDate');
   if(el && !el.value){
-    el.value = new Date().toISOString().split('T')[0];
+    el.value = todayStr();
   }
 }
 
@@ -10592,7 +10677,7 @@ async function checkPriceAlerts(){
 async function checkEarningsAlerts(){
   if(!settings.discordWebhook) return;
   const alertDays = settings.earningsAlertDays || 2;
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const now = Date.now();
 
   const tickers = [...new Set(positions.map(p=>p.ticker))];
