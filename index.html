@@ -1468,6 +1468,15 @@
       <div class="hint">⚠ 止盈默认用成本价：确保触发时相对你的买入成本真正是盈利。若改用市价，在深度亏损持仓上可能出现"止盈价低于成本价"、触发时实际是亏损离场的情况。</div>
     </div>
     <div class="field">
+      <label>五层止损引擎 · 默认策略周期 Default Strategy Profile</label>
+      <div class="hint" style="margin-bottom:8px;">决定"风险指标"Tab里，主止损从五层里的哪几层挑选、结构止损回看窗口天数、时间止损阈值。每只股票可在"该股设置"里单独覆盖此全局默认值。</div>
+      <select id="defaultStopProfile">
+        <option value="short">短线 Short-term（主止损限定于：结构止损/ATR跟踪；回看7日；10日无表现即触发时间止损）</option>
+        <option value="swing">波段 Swing（主止损限定于：结构止损/ATR跟踪/利润锁定；回看15日；45日）</option>
+        <option value="long">长线 Long-term（主止损限定于：EMA趋势止损/利润锁定；回看30日；不启用固定天数时间止损）</option>
+      </select>
+    </div>
+    <div class="field">
       <label>止损/止盈 默认计算方式 Default SL/TP Method</label>
       <select id="slMethod" onchange="toggleSlMethodParams()">
         <option value="pct">固定百分比 Fixed %</option>
@@ -1616,6 +1625,16 @@
       </div>
     </div>
 
+    <div class="field" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+      <label style="font-weight:600;color:var(--accent2);">⏱ 策略周期 / Strategy Profile</label>
+      <div class="hint" style="margin-bottom:8px;">决定风险指标Tab里五层止损引擎"主止损"从哪些层里挑选、结构止损回看窗口、时间止损天数。不设置则使用设置里的全局默认档位。</div>
+      <select id="tdStopProfile">
+        <option value="">— 使用全局默认</option>
+        <option value="short">短线 Short-term（主止损限定于：结构止损/ATR跟踪；回看7日；10日无表现触发时间止损）</option>
+        <option value="swing">波段 Swing（主止损限定于：结构止损/ATR跟踪/利润锁定；回看15日；45日）</option>
+        <option value="long">长线 Long-term（主止损限定于：EMA趋势止损/利润锁定；回看30日；不启用固定天数时间止损）</option>
+      </select>
+    </div>
     <div class="field">
       <label>默认止损价 Default Stop-Loss</label>
       <input id="tdStopLoss" type="number" step="0.01" placeholder="留空表示不设置">
@@ -2662,11 +2681,12 @@ const DS_FUND = DS;
 let positions = [];
 let settings = {
   apiKeyId:'', apiSecret:'', apiEnv:'paper', benchmarkTicker:'SPY',
-  fmpKey:'uxBrUroYyslNGRlwxXFO3f9OLagksjod',
-  discordWebhook:'https://discord.com/api/webhooks/1522004890879266907/gBPV7OeFlgR-hL5Aha4VGZRqKpROHFpxvjBuAdVn-TGjAdr4_UWvQpMOjE22Qg9tdaHT',
+  fmpKey:'', // 安全修复：不再硬编码默认Key，公开源码中曾暴露真实密钥，请在设置中自行填入
+  discordWebhook:'', // 安全修复：不再硬编码默认Webhook，公开源码中曾暴露真实地址，请在设置中自行填入
   priceAlertThresholdPct: 10, // send Discord alert if price moves >X% from prevClose
   earningsAlertDays: 2,       // send Discord alert X days before earnings
   cashBalance: 0,             // cash / buying power not invested in positions
+  defaultStopProfile:'swing',
   slMethod:'pct', slBasisStop:'market', slBasisProfit:'cost', slPctStop:8, slPctProfit:20,
   slAtrStopMult:2, slAtrProfitMult:3, slRecentDays:20,
   trailMethod:'pct', trailPct:8, trailAtrMult:2.5, trailIntervalSec:60,
@@ -3166,12 +3186,13 @@ function resolveLiveStopSelection(stopObj){
   const live = quoteCache[stopObj.ticker]?.price;
   const refPrice = (live!=null && live>0) ? live : stopObj.price;
   if(refPrice === stopObj.price) return stopObj; // no live quote cached — nothing to refresh, avoid needless work
+  const pp = STOP_PROFILE_PARAMS[resolveStopProfile(stopObj.profile)];
   const rawCandidates = [
     { key:'atr', label:'ATR跟踪止损', value: stopObj.atrTrailingStop },
     { key:'trend', label:'趋势止损(EMA)', value: stopObj.trendStop },
     { key:'structure', label:'结构止损(摆动低点)', value: stopObj.structureStop },
     { key:'profitLock', label:'利润锁定', value: stopObj.profitLockStop },
-  ].filter(c=>c.value!=null && isFinite(c.value));
+  ].filter(c=>c.value!=null && isFinite(c.value) && pp.eligibleKeys.includes(c.key));
   const validNow = rawCandidates.filter(c=>c.value < refPrice).sort((a,b)=>b.value-a.value);
   const primary = validNow[0] || null;
   let secondary = validNow[1] || null;
@@ -3754,7 +3775,23 @@ function getHeldPositionGroups(){
 // Chinese-language "为什么" explanation for every layer so the AI Decision
 // Engine (and the person reading the table) can see the calculation basis,
 // not just a bare number.
-function analyzeStopLevels(ticker, group, bars){
+// 各策略周期的参数表：结构止损回看天数、时间止损阈值天数（null=不启用固定天数
+// 时间止损）、以及"主/次止损"竞选时允许参与的候选层——这是对①原始评测"止损必须
+// 由持仓周期决定，而非哪个指标离现价最近"这条意见的回应：不同档位从不同的候选
+// 子集里挑，而不是四层一起打擂台、谁离现价最近谁当选。analyzeStopLevels()与
+// resolveLiveStopSelection()共用此表，确保计算时与实时价重新筛选时口径一致。
+const STOP_PROFILE_PARAMS = {
+  short: { structureLookback: 7,  timeStopDays: 10,  eligibleKeys: ['atr','structure'] },
+  swing: { structureLookback: 15, timeStopDays: 45,  eligibleKeys: ['atr','structure','profitLock'] },
+  long:  { structureLookback: 30, timeStopDays: null, eligibleKeys: ['trend','profitLock'] },
+};
+function resolveStopProfile(stopProfile){
+  return (stopProfile==='short'||stopProfile==='long') ? stopProfile : 'swing';
+}
+
+function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
+  const profile = resolveStopProfile(stopProfile);
+  const pp = STOP_PROFILE_PARAMS[profile];
   if(!bars || bars.length < 30) return { ticker, insufficient:true };
 
   const closes = bars.map(b=>b.c);
@@ -3801,10 +3838,25 @@ function analyzeStopLevels(ticker, group, bars){
   /* ---------- LAYER 2: ATR 跟踪止损（主止损核心候选） ---------- */
   const atrMult = 2.5;
   let atrTrailingStop = null;
-  let atrReason = atr!=null
-    ? `以持仓期内最高收盘价${highestCloseSinceEntry.toFixed(2)}为锚点，减去${atrMult}×ATR14(${atr.toFixed(2)})，止损只随新高上移、不下移`
-    : 'ATR数据不足（需≥14个交易日）';
-  if(atr!=null){ atrTrailingStop = highestCloseSinceEntry - atrMult*atr; }
+  let atrReason = 'ATR数据不足（需≥14个交易日）';
+  if(atr!=null){
+    const rawAtrStop = highestCloseSinceEntry - atrMult*atr;
+    // BUGFIX: previously recomputed fresh every run using the CURRENT atr —
+    // if volatility expanded between two calculations, the resulting stop
+    // could actually decrease even though the anchor (highest close) never
+    // moved down, silently violating the "only up, never down" rule the UI
+    // text claimed. Now compares against the last cached value for this
+    // ticker and keeps whichever is higher, so it genuinely only ratchets up.
+    const prevAtrStop = (prevEntry && !prevEntry.insufficient && prevEntry.atrTrailingStop!=null)
+      ? prevEntry.atrTrailingStop : null;
+    if(prevAtrStop!=null && prevAtrStop > rawAtrStop){
+      atrTrailingStop = prevAtrStop;
+      atrReason = `以持仓期内最高收盘价${highestCloseSinceEntry.toFixed(2)}为锚点，减去${atrMult}×ATR14(${atr.toFixed(2)})算得${rawAtrStop.toFixed(2)}，但因近期波动率(ATR)扩大导致该值低于上次已锁定的${prevAtrStop.toFixed(2)}，为遵守"只升不降"原则维持原止损位不变`;
+    } else {
+      atrTrailingStop = rawAtrStop;
+      atrReason = `以持仓期内最高收盘价${highestCloseSinceEntry.toFixed(2)}为锚点，减去${atrMult}×ATR14(${atr.toFixed(2)})，与上次止损位比较后取更高者，确保只随新高上移、不因波动率变化而下移`;
+    }
+  }
 
   /* ---------- LAYER 3: EMA20/EMA50 趋势止损 ---------- */
   let trendStop = null, trendReason = 'EMA数据不足（需≥50个交易日）';
@@ -3819,14 +3871,14 @@ function analyzeStopLevels(ticker, group, bars){
   }
 
   /* ---------- LAYER 4: 摆动低点 / 结构止损 ---------- */
-  const lookback = 15;
+  const lookback = pp.structureLookback;
   const recentBars = bars.slice(Math.max(0, bars.length-lookback-1), bars.length-1); // exclude today
   let structureStop = null, structureReason = '结构数据不足';
   if(recentBars.length>=5){
     const swingLow = Math.min(...recentBars.map(b=>b.l));
     const buffer = atr!=null ? 0.25*atr : swingLow*0.005;
     structureStop = swingLow - buffer;
-    structureReason = `近${recentBars.length}个交易日摆动低点为${swingLow.toFixed(2)}，扣除${atr!=null?'0.25×ATR':'0.5%'}缓冲(${buffer.toFixed(2)}) = ${structureStop.toFixed(2)}，用于过滤盘中假突破`;
+    structureReason = `近${recentBars.length}个交易日（${profile==='short'?'短线':profile==='long'?'长线':'波段'}档位回看窗口）摆动低点为${swingLow.toFixed(2)}，扣除${atr!=null?'0.25×ATR':'0.5%'}缓冲(${buffer.toFixed(2)}) = ${structureStop.toFixed(2)}，用于过滤盘中假突破`;
   }
 
   /* ---------- LAYER 5: 动态锁利润 Profit Lock（基于R倍数） ---------- */
@@ -3852,44 +3904,55 @@ function analyzeStopLevels(ticker, group, bars){
   }
 
   /* ---------- TIME STOP 时间止损 ---------- */
-  const timeStopThresholdDays = 60;
+  const timeStopThresholdDays = pp.timeStopDays;
   const noBreakoutLookback = 20;
   let timeStopFlag = false;
   let timeStopReason = '缺少建仓日期，无法计算持仓天数';
-  if(holdDays!=null){
+  if(timeStopThresholdDays==null){
+    timeStopReason = '长线策略档位：不使用固定天数时间止损，建仓周期较长的持仓应参考基本面变化与相对强度(RS)是否持续恶化，而非单纯以天数判断';
+  } else if(holdDays!=null){
     const recentHigh = Math.max(...bars.slice(-noBreakoutLookback).map(b=>b.h));
     const madeRecentHigh = recentHigh >= highestHighSinceEntry*0.999;
     if(holdDays >= timeStopThresholdDays && (rMultiple==null || rMultiple<1) && !madeRecentHigh){
       timeStopFlag = true;
-      timeStopReason = `已持仓${holdDays}天(≥${timeStopThresholdDays}天阈值)，近${noBreakoutLookback}日未创持仓以来新高，且盈利不足1R，资金效率偏低，建议评估是否换股`;
+      timeStopReason = `已持仓${holdDays}天(≥${timeStopThresholdDays}天阈值，${profile==='short'?'短线':'波段'}档位)，近${noBreakoutLookback}日未创持仓以来新高，且盈利不足1R，资金效率偏低，建议评估是否换股`;
     } else {
-      timeStopReason = `已持仓${holdDays}天，${madeRecentHigh?'近期有新高表现，':''}${rMultiple!=null&&rMultiple>=1?'已有正向盈利，':''}暂不触发时间止损`;
+      timeStopReason = `已持仓${holdDays}天(${profile==='short'?'短线':'波段'}档位阈值${timeStopThresholdDays}天)，${madeRecentHigh?'近期有新高表现，':''}${rMultiple!=null&&rMultiple>=1?'已有正向盈利，':''}暂不触发时间止损`;
     }
   }
 
   /* ---------- EMERGENCY STOP 紧急止损（不计入场逻辑的最终防线） ---------- */
   const emergencyPct = 0.15;
   const emergencyByPct = group.avgCost!=null ? group.avgCost*(1-emergencyPct) : null;
-  const emergencyByAtr = atr!=null ? price - 4*atr : null;
+  // BUGFIX: anchor to the highest close since entry (same anchor as the ATR
+  // trailing stop), NOT the current price. Anchoring to current price meant
+  // this "emergency" floor retreated downward right alongside a declining
+  // stock — e.g. price 100→90→80 dragged the floor from 84→74→64 with it,
+  // so it could never actually trigger during a real decline. Anchoring to
+  // the peak-since-entry makes it move only upward, like a true last resort.
+  const emergencyByAtr = atr!=null ? highestCloseSinceEntry - 4*atr : null;
   let emergencyStop = null, emergencyReason = '数据不足，无法计算紧急止损';
   if(emergencyByPct!=null && emergencyByAtr!=null){
     emergencyStop = Math.min(emergencyByPct, emergencyByAtr);
-    emergencyReason = `取"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})与"现价-4×ATR"(${emergencyByAtr.toFixed(2)})两者中更低者，作为不计较入场逻辑、任何情况下都必须离场的最终防线`;
+    emergencyReason = `取"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})与"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})两者中更低者，作为不计较入场逻辑、任何情况下都必须离场的最终防线（锚定最高收盘价，只随新高上移，不随现价下跌而后退）`;
   } else if(emergencyByPct!=null){
     emergencyStop = emergencyByPct;
     emergencyReason = `ATR数据不足，采用"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})作为紧急止损`;
   } else if(emergencyByAtr!=null){
     emergencyStop = emergencyByAtr;
-    emergencyReason = `缺少持仓成本数据，采用"现价-4×ATR"(${emergencyByAtr.toFixed(2)})作为紧急止损`;
+    emergencyReason = `缺少持仓成本数据，采用"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})作为紧急止损`;
   }
 
   /* ---------- 综合：主止损 / 次级止损 / 紧急止损 三档 ---------- */
+  // 按策略档位限定哪些层可以参与主/次止损竞选（例如短线不让EMA趋势止损这种
+  // 偏慢的层次当主止损；长线则排除ATR/结构这类偏紧的层次）。被排除的层仍然
+  // 计算出数值、仍在展开详情里展示，只是不参与"谁是主止损"的竞选。
   const candidates = [
     { key:'atr', label:'ATR跟踪止损', value: atrTrailingStop },
     { key:'trend', label:'趋势止损(EMA)', value: trendStop },
     { key:'structure', label:'结构止损(摆动低点)', value: structureStop },
     { key:'profitLock', label:'利润锁定', value: profitLockStop },
-  ].filter(c=>c.value!=null && isFinite(c.value));
+  ].filter(c=>c.value!=null && isFinite(c.value) && pp.eligibleKeys.includes(c.key));
 
   const validBelow = candidates.filter(c=>c.value < price).sort((a,b)=>b.value-a.value);
   const breachedLayers = candidates.filter(c=>c.value >= price);
@@ -3917,7 +3980,7 @@ function analyzeStopLevels(ticker, group, bars){
   }
 
   return {
-    ticker, price, holdDays, rMultiple, avgCost: group.avgCost, qty: group.qty,
+    ticker, price, holdDays, rMultiple, avgCost: group.avgCost, qty: group.qty, profile,
     weeklyVerdict, weeklyReason, curWEma10, curWEma20,
     atrTrailingStop, atrReason, atr,
     trendStop, trendReason, curEma20, curEma50,
@@ -3957,7 +4020,8 @@ async function computeStopEngine(){
       failCount++;
       return;
     }
-    newCache[g.ticker] = analyzeStopLevels(g.ticker, g, bars);
+    const effProfile = (tickerSettings[g.ticker] && tickerSettings[g.ticker].stopProfile) || settings.defaultStopProfile || 'swing';
+    newCache[g.ticker] = analyzeStopLevels(g.ticker, g, bars, stopEngineCache[g.ticker], effProfile);
   });
   stopEngineCache = newCache;
   stopEngineLastCalcTs = Date.now();
@@ -4063,7 +4127,7 @@ function renderStopEngineTable(){
       : (s.timeStopFlag ? '🟡 时间止损预警' : '✅ 正常');
     const rowHtml = `
     <tr class="rowclick" onclick="toggleStopDetail('${s.ticker}')">
-      <td class="ticker sticky-col">${s.ticker}</td>
+      <td class="ticker sticky-col">${s.ticker}<br><span class="hint" style="font-size:10px;color:var(--accent2);">${s.profile==='short'?'短线':s.profile==='long'?'长线':'波段'}档</span></td>
       <td>${fmt$(refPrice)}${s._priceIsLive?'<span style="color:var(--green);font-size:10px;" title="实时报价">●实时</span>':'<span style="color:var(--muted);font-size:10px;" title="无实时报价，退回日线收盘价">●收盘</span>'}</td>
       <td>${s.holdDays!=null?s.holdDays+'天':'—'}</td>
       <td class="${s.rMultiple!=null?pclass(s.rMultiple):'neu'}">${s.rMultiple!=null?s.rMultiple.toFixed(1)+'R':'—'}</td>
@@ -4952,6 +5016,7 @@ function openSettings(){
   document.getElementById('earningsAlertDays').value = settings.earningsAlertDays || 2;
   document.getElementById('apiEnv').value = settings.apiEnv;
   document.getElementById('benchmarkTicker').value = settings.benchmarkTicker;
+  document.getElementById('defaultStopProfile').value = settings.defaultStopProfile || 'swing';
   document.getElementById('slMethod').value = settings.slMethod;
   document.getElementById('slBasisStop').value = settings.slBasisStop ?? settings.slBasis ?? 'market';
   document.getElementById('slBasisProfit').value = settings.slBasisProfit ?? 'cost';
@@ -5005,6 +5070,7 @@ async function saveSettings(){
   settings.earningsAlertDays = parseInt(document.getElementById('earningsAlertDays').value) || 2;
   settings.apiEnv = document.getElementById('apiEnv').value;
   settings.benchmarkTicker = document.getElementById('benchmarkTicker').value.trim().toUpperCase() || 'SPY';
+  settings.defaultStopProfile = document.getElementById('defaultStopProfile').value;
   settings.slMethod = document.getElementById('slMethod').value;
   settings.slBasisStop = document.getElementById('slBasisStop').value;
   settings.slBasisProfit = document.getElementById('slBasisProfit').value;
@@ -5106,7 +5172,13 @@ function resetInitialRisk(id){
     showToast(`${p.ticker} 当前无有效止损价，无法重置R倍数基准`);
     return;
   }
-  p.initialRisk = parseFloat((p.cost - p.stopLoss).toFixed(4));
+  const oldRisk = p.initialRisk;
+  const newRisk = parseFloat((p.cost - p.stopLoss).toFixed(4));
+  const warnMsg = oldRisk!=null
+    ? `确定要重置 ${p.ticker} 的R倍数基准吗？\n\n当前基准：每股风险 ${fmt$(oldRisk)}\n重置后：每股风险 ${fmt$(newRisk)}\n\n⚠️ 这会改变这笔仓位"1R"的定义——历史上已经计算过的R倍数（比如止损引擎、AI决策理由里引用的数值）会跟着改变口径，过去的3R可能变成8R，无法再与其他交易做统一的胜率/期望值比较。\n\n仅在最初录入止损价有误、需要修正时使用，不要在盈利后为了"看起来R倍数更好看"而重置。`
+    : `确定要为 ${p.ticker} 设置R倍数基准吗？\n\n每股风险将设为 ${fmt$(newRisk)}（成本价 - 当前止损价）\n此后除非再次手动重置，该数值将永久作为这笔仓位"1R"的定义。`;
+  if(!confirm(warnMsg)) return;
+  p.initialRisk = newRisk;
   saveState();
   renderPositions();
   showToast(`${p.ticker} R倍数基准已重置为当前止损价 ${fmt$(p.stopLoss)}`);
@@ -6238,6 +6310,7 @@ function openTickerDefaultModal(ticker){
   const q = quoteCache[ticker];
   const price = q ? q.price : null;
   document.getElementById('tickerDefaultInfo').innerHTML = `<strong>${ticker}</strong> · ${lotCount}笔 · 现价 ${price?fmt$(price):'—'}`;
+  document.getElementById('tdStopProfile').value = td.stopProfile || '';
   document.getElementById('tdStopLoss').value = td.stopLoss ?? '';
   document.getElementById('tdTakeProfit').value = td.takeProfit ?? '';
   document.getElementById('tdAddZone').value = td.addZone ?? '';
@@ -6322,6 +6395,7 @@ function saveTickerDefaultModal(){
   const addZoneVal = document.getElementById('tdAddZone').value;
   const trailVal = document.getElementById('tdTrailing').checked;
 
+  setTickerDefault(ticker, 'stopProfile', document.getElementById('tdStopProfile').value || null);
   setTickerDefault(ticker, 'stopLoss', stopVal? parseFloat(stopVal): null);
   setTickerDefault(ticker, 'takeProfit', profitVal? parseFloat(profitVal): null);
   setTickerDefault(ticker, 'addZone', addZoneVal? parseFloat(addZoneVal): null);
