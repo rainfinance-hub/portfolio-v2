@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>机构级持仓追踪系统 / Institutional Portfolio Tracker</title>
+<title>机构级持仓追踪系统 V2 / Institutional Portfolio Tracker</title>
 <style>
   :root{
     --bg:#0b0e14;
@@ -315,7 +315,7 @@
 <div class="wrap">
 
   <header>
-    <h1>📦 我的持仓股 — 机构级追踪系统
+    <h1>📦 我的持仓股 — 机构级追踪系统 V2
       <span class="sub">INSTITUTIONAL PORTFOLIO TRACKER · Powered by Alpaca Markets</span>
     </h1>
     <div class="header-actions">
@@ -1272,11 +1272,58 @@
     <div style="display:flex;flex-direction:column;gap:16px;font-family:var(--sans);font-size:13px;line-height:1.7;">
 
       <div>
+        <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">🧠 系统架构：九大引擎，不是九个页面</div>
+        <div style="color:var(--muted);">
+          本系统采用"决策优先"设计——不只是记录持仓，而是每天告诉你该怎么办。九大引擎之间是有依赖关系的计算链，不是互不相关的功能：<br><br>
+          ① <strong style="color:var(--text);">个股智能 Stock Intel</strong> — 六维度评分（趋势/动量/相对强度/量能/波动/时机），是后面所有模块的地基<br>
+          ② <strong style="color:var(--text);">仓位管理</strong>（持仓明细内）— R倍数、持仓天数、仓位状态判定<br>
+          ③ <strong style="color:var(--text);">组合智能 Portfolio Intel</strong> — 健康分、集中度(HHI)、相关性矩阵、资金效率、健康分走势<br>
+          ④ <strong style="color:var(--text);">风险指标 Risk</strong> — 五层止损引擎（周线大局/ATR跟踪/趋势/结构/利润锁定）+ 风险预算 + 流动性检查<br>
+          ⑤ <strong style="color:var(--text);">大盘环境 Market Intel</strong> — 牛/熊/震荡三档判断 + 板块轮动（基于持仓内代理，非全市场统计）<br>
+          ⑥ <strong style="color:var(--text);">决策仪表盘 Dashboard</strong> — AI Decision Engine，汇总①-⑤给出最终建议，本身不做任何计算<br>
+          ⑦ <strong style="color:var(--text);">矛盾检测 + 信号质检</strong>（Dashboard展开详情内）— 多周期信号打架时自动给建议降级<br>
+          ⑧ <strong style="color:var(--text);">决策历史 / 一致性 / 信号新鲜度</strong>（Dashboard展开详情内）— 追踪AI建议是否反复横跳、信号老化提醒
+        </div>
+      </div>
+
+      <div>
+        <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">✅ 每日正确使用顺序（重要，顺序错了会看到"数据缺失"提示）</div>
+        <div style="color:var(--muted);">
+          1. <strong style="color:var(--text);">持仓明细</strong> — 先确认成本、止损价都填对<br>
+          2. <strong style="color:var(--text);">个股智能</strong> — 点「重新计算」，这是地基<br>
+          3. <strong style="color:var(--text);">大盘环境</strong> — 点「重新计算大盘环境」<br>
+          4. <strong style="color:var(--text);">风险指标</strong> — 点「计算止损引擎」<br>
+          5. <strong style="color:var(--text);">组合智能</strong> — 点「重新计算」<br>
+          6. <strong style="color:var(--text);">决策仪表盘</strong> — 最后回来看汇总结果（这里不计算，纯读取前5步）
+        </div>
+      </div>
+
+      <div>
+        <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">☁️ 云端同步（可选）</div>
+        <div style="color:var(--muted);">
+          在设置里开启后，持仓/历史交易/观察名单/股息记录等7类数据会自动同步到你自己部署的 Cloudflare Worker，实现多设备共享<br>
+          <strong style="color:var(--text);">API Key 永远不会同步</strong>——Alpaca/FMP/Discord 密钥只存在当前设备的浏览器里<br>
+          实时报价/评分/止损计算结果也不同步——这些数值应在每台设备本地重新计算，不依赖同步
+        </div>
+      </div>
+
+      <div>
+        <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">⚠️ 免费数据的诚实边界</div>
+        <div style="color:var(--muted);">
+          所有"AI建议"均为<strong style="color:var(--text);">规则引擎</strong>生成，不调用任何大模型API，每条理由都引用具体计算数值<br>
+          "量能/机构流"是OBV+量价比代理，不是真实机构资金流<br>
+          "市场宽度"是持仓内代理（已持仓代码中站上SMA20的占比），不是全市场统计<br>
+          评分基于日线收盘价，不含盘前盘后波动
+        </div>
+      </div>
+
+      <div>
         <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">🚀 快速开始</div>
         <div style="color:var(--muted);">
           1. 点右上角 <strong style="color:var(--text);">⚙️ 设置</strong> → 填入 Alpaca API Key（免费注册 alpaca.markets）<br>
           2. 在顶部表单填入股票代码、数量、成本价 → 按 <kbd>Enter</kbd> 快速添加<br>
-          3. 点 <strong style="color:var(--text);">🔄 刷新</strong> 拉取实时报价
+          3. 点 <strong style="color:var(--text);">🔄 刷新</strong> 拉取实时报价<br>
+          4. 照上方"每日正确使用顺序"依次点一遍各引擎的「重新计算」按钮
         </div>
       </div>
 
@@ -1317,13 +1364,18 @@
       <div>
         <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">📊 各 Tab 功能</div>
         <div style="color:var(--muted);">
-          <strong style="color:var(--text);">风险指标</strong> — 点「计算风险指标」拉取历史K线计算 Beta/VaR/Sortino 等<br>
-          <strong style="color:var(--text);">资产配置</strong> — 环形图 + 行业分布（点「加载行业数据」）<br>
+          <strong style="color:var(--text);">决策仪表盘</strong> — AI每日建议、今日风险/机会、晨报晚报生成（可发Discord）<br>
+          <strong style="color:var(--text);">个股智能</strong> — 六维度评分表，点行展开查看各维度详情<br>
+          <strong style="color:var(--text);">组合智能</strong> — 健康分、相关性矩阵、集中度、资金效率提示、健康分走势<br>
+          <strong style="color:var(--text);">大盘环境</strong> — 牛熊震荡判断、持仓内代理宽度、板块轮动<br>
+          <strong style="color:var(--text);">风险指标</strong> — 点「计算止损引擎」拉取历史K线计算五层止损 + 风险预算 + 流动性 + Beta/VaR/Sortino等<br>
+          <strong style="color:var(--text);">资产配置</strong> — 环形图 + 行业分布（点「加载行业数据」）+ 再平衡建议<br>
           <strong style="color:var(--text);">预警管理</strong> — 设置止损止盈后，触及时自动发送浏览器通知 + 声音<br>
-          <strong style="color:var(--text);">历史交易</strong> — 展开批次后点 <strong>✕</strong> 平仓，填入卖出价自动计算盈亏<br>
+          <strong style="color:var(--text);">历史交易</strong> — 展开批次后点 <strong>✕</strong> 平仓，填入卖出价自动计算盈亏；每行可编辑✎/删除🗑<br>
           <strong style="color:var(--text);">盈亏分析</strong> — 期间盈亏/Kelly仓位/月度日历/NAV走势（需积累快照）<br>
           <strong style="color:var(--text);">股息</strong> — 显示各持仓预计年/月股息收入，点「加载股息数据」初始化<br>
-          <strong style="color:var(--text);">财报</strong> — 显示近期财报日期，⚡红色=7天内即将发布
+          <strong style="color:var(--text);">财报</strong> — 显示近期财报日期，⚡红色=7天内即将发布<br>
+          <strong style="color:var(--text);">观察名单</strong> — 追踪未持仓代码，设定目标价提醒
         </div>
       </div>
 
@@ -1340,7 +1392,8 @@
         <div style="font-weight:700;color:var(--accent);margin-bottom:6px;">🔑 API Key 说明</div>
         <div style="color:var(--muted);">
           <strong style="color:var(--text);">Alpaca</strong>（必须）：免费注册 alpaca.markets，用于实时报价和历史K线<br>
-          &nbsp;&nbsp;免费版使用 IEX 数据源，延迟约15分钟，足够持仓追踪使用<br>
+          &nbsp;&nbsp;免费版使用 IEX 单一交易所数据源，是<strong style="color:var(--text);">实时</strong>数据而非延迟数据，但只覆盖约2-5%的市场成交量，冷门小盘股价格可能与主流报价源略有偏差<br>
+          &nbsp;&nbsp;免费账户的批量接口有限制，本系统已针对性处理为逐票请求，无需担心<br>
           &nbsp;&nbsp;建议使用 Paper Trading Key（以 PK 开头），不涉及真实资金<br>
           <strong style="color:var(--text);">FMP</strong>（可选）：financialmodelingprep.com，用于行业分类（目前内置对照表已覆盖主要持仓）
         </div>
@@ -10364,7 +10417,7 @@ async function testDiscordAlert(){
     title: '🔔 测试消息 / Test Alert',
     description: '你的持仓追踪系统已成功连接 Discord！\n价格预警和财报提醒将发送到此频道。',
     color: 0x2dd4bf,
-    footer: { text: '机构级持仓追踪系统 · ' + new Date().toLocaleString('zh-CN') }
+    footer: { text: '机构级持仓追踪系统 V2 · ' + new Date().toLocaleString('zh-CN') }
   });
   showToast(ok ? '✅ Discord测试消息发送成功！' : '❌ 发送失败，请检查Webhook URL');
 }
