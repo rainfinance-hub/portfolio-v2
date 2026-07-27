@@ -3145,6 +3145,45 @@ function applySummaryCollapseState(){
 function heldTickers(){ return [...new Set(positions.map(p=>p.ticker))]; }
 
 /* ================================================================
+   BUGFIX (post v2_10_1 review): analyzeStopLevels() picks primary/
+   secondary/breachedLayers using the daily-bar close price captured
+   at calculation time. If the live price has since moved (e.g. an
+   intraday dip after "计算止损引擎" was run), a level that was validly
+   below price at calc-time can end up sitting ABOVE the live price —
+   yet was still being shown/used as "Primary Stop" everywhere, since
+   only the *displayed* price/distance% were ever refreshed against
+   quoteCache, not the underlying primary/secondary selection itself.
+
+   This helper re-runs that exact selection against the live quote
+   price (falling back to the calc-time price if no live quote is
+   cached yet), WITHOUT mutating stopEngineCache — every consumer
+   (Risk tab table, Conflict Engine, AI Decision Engine) must call
+   this instead of reading stopObj.primary/secondary/breachedLayers
+   directly, so all three stay consistent with each other.
+   ================================================================ */
+function resolveLiveStopSelection(stopObj){
+  if(!stopObj || stopObj.notyet || stopObj.insufficient) return stopObj;
+  const live = quoteCache[stopObj.ticker]?.price;
+  const refPrice = (live!=null && live>0) ? live : stopObj.price;
+  if(refPrice === stopObj.price) return stopObj; // no live quote cached — nothing to refresh, avoid needless work
+  const rawCandidates = [
+    { key:'atr', label:'ATR跟踪止损', value: stopObj.atrTrailingStop },
+    { key:'trend', label:'趋势止损(EMA)', value: stopObj.trendStop },
+    { key:'structure', label:'结构止损(摆动低点)', value: stopObj.structureStop },
+    { key:'profitLock', label:'利润锁定', value: stopObj.profitLockStop },
+  ].filter(c=>c.value!=null && isFinite(c.value));
+  const validNow = rawCandidates.filter(c=>c.value < refPrice).sort((a,b)=>b.value-a.value);
+  const primary = validNow[0] || null;
+  let secondary = validNow[1] || null;
+  if(!secondary){
+    const remaining = rawCandidates.filter(c=>!primary || c.key!==primary.key).sort((a,b)=>a.value-b.value);
+    secondary = remaining.find(c=>c.value < refPrice) || remaining[0] || null;
+  }
+  const breachedLayers = rawCandidates.filter(c=>c.value >= refPrice);
+  return { ...stopObj, primary, secondary, breachedLayers };
+}
+
+/* ================================================================
    GENERIC TABLE SORT UTILITY (shared across all sortable tables)
    ================================================================ */
 let tableSortState = {}; // tableId -> {key, dir:1|-1}
@@ -3969,7 +4008,7 @@ function renderStopEngineTable(){
     body.innerHTML = '<tr><td colspan="12" class="lang-en" style="padding:16px;">暂无持仓，请先在"持仓明细"中添加</td></tr>';
     return;
   }
-  const rows = groups.map(g=>stopEngineCache[g.ticker] || { ticker:g.ticker, notyet:true });
+  const rows = groups.map(g=>resolveLiveStopSelection(stopEngineCache[g.ticker]) || { ticker:g.ticker, notyet:true });
 
   // Display fix: prefer the live quote (quoteCache) for "现价" and all distance-to-stop
   // calculations. The stop LEVELS themselves (primary/secondary/EMA/ATR/weekly verdict)
@@ -5174,7 +5213,7 @@ function aiCurrentPrice(ticker, lots){
   if(q && q.price!=null) return q.price;
   const scoreObj = stockScoreCache[ticker];
   if(scoreObj && !scoreObj.insufficient && scoreObj.price!=null) return scoreObj.price;
-  const stopObj = stopEngineCache[ticker];
+  const stopObj = resolveLiveStopSelection(stopEngineCache[ticker]);
   if(stopObj && !stopObj.insufficient && stopObj.price!=null) return stopObj.price;
   return lots[0] ? lots[0].cost : null;
 }
@@ -5305,7 +5344,7 @@ function computeAIDecision(ticker){
   const grade = hasScore ? scoreObj.grade : null;
 
   // Module④ — five-layer stop engine
-  const stopObj = stopEngineCache[ticker];
+  const stopObj = resolveLiveStopSelection(stopEngineCache[ticker]);
   const hasStop = !!(stopObj && !stopObj.insufficient);
   const rMultiple = hasStop ? stopObj.rMultiple : calcGroupRMultiple(lots, price);
   const oldestBuyDate = lots.map(l=>l.buyDate).filter(Boolean).sort()[0] || null;
@@ -5557,7 +5596,7 @@ function computeRiskBudget(){
     const lots = positions.filter(p=>p.ticker===t);
     const qty = lots.reduce((s,p)=>s+p.qty,0);
     const q = quoteCache[t];
-    const stop = stopEngineCache[t];
+    const stop = resolveLiveStopSelection(stopEngineCache[t]);
     const price = q ? q.price : (stop && stop.price!=null ? stop.price : (lots[0]?lots[0].cost:null));
     let stopBasis = null, source = null, riskAmount = null;
     if(stop && !stop.insufficient && stop.primary && stop.primary.value!=null && price!=null){
