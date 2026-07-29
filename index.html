@@ -309,6 +309,60 @@
   #stockTableWrap table{min-width:760px;}
   .sticky-col{position:sticky;left:0;z-index:2;background:var(--panel);box-shadow:2px 0 4px rgba(0,0,0,0.15);}
   thead .sticky-col{z-index:3;background:var(--panel2);}
+
+  /* ================================================================
+     POSITION CARD LAYOUT (V1.4) — replaces the old accounting-view
+     table for 持仓明细/Positions with decision-driven cards. See
+     index_V1.4_说明.md for the full rationale.
+     ================================================================ */
+  .positions-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;}
+  .position-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;transition:border-color .15s;}
+  .position-card:hover{border-color:var(--accent2);}
+  .position-card.loss-alert-card{border-color:var(--red);}
+  .pc-top{cursor:pointer;}
+  .pc-title-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .pc-title-row .ticker{font-size:16px;}
+  .pc-expand-arrow{display:inline-block;width:12px;transition:transform .15s;color:var(--muted);}
+  .pc-price{margin-left:auto;font-family:var(--mono);font-size:14px;font-weight:600;white-space:nowrap;}
+  .pc-badges-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+  .pc-tags-row{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px;}
+  .pc-metrics-row{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
+  .pc-metric-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;font-family:var(--sans);}
+  .pc-metric-primary .r-value{font-size:21px;}
+  .pc-metric-value{font-family:var(--mono);font-size:13px;font-weight:600;}
+  .pc-meta-line{margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--sans);display:flex;flex-wrap:wrap;gap:4px 10px;}
+  .stop-ladder{display:flex;align-items:center;gap:5px;margin-top:10px;flex-wrap:wrap;}
+  .stop-ladder-label{font-size:10px;color:var(--muted);margin-right:2px;font-family:var(--sans);}
+  .stop-dot{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;font-size:9.5px;font-weight:700;font-family:var(--sans);cursor:help;border:1.5px solid transparent;}
+  .stop-dot-ok{background:rgba(34,197,94,0.18);color:var(--green);}
+  .stop-dot-breach{background:rgba(239,68,68,0.22);color:var(--red);}
+  .stop-dot-na{background:rgba(122,131,152,0.12);color:var(--muted);}
+  .stop-dot-active{border-color:var(--text);}
+  .pc-tp-line{margin-top:8px;font-size:12px;font-family:var(--mono);display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .pc-actions-row{display:flex;justify-content:flex-end;gap:2px;margin-top:8px;border-top:1px solid var(--border);padding-top:6px;}
+  .pc-detail{margin-top:12px;border-top:1px dashed var(--border);padding-top:12px;}
+  .pc-lot{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  .pc-lot-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;}
+  .pc-lot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:10px 12px;margin-top:9px;}
+  .pc-lot-field label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px;font-family:var(--sans);}
+  .pc-lot-actions{display:flex;justify-content:flex-end;gap:2px;margin-top:6px;}
+  .health-A{background:rgba(34,197,94,0.15);color:var(--green);}
+  .health-B{background:rgba(96,165,250,0.15);color:var(--accent2);}
+  .health-C{background:rgba(245,158,11,0.15);color:var(--amber);}
+  .health-D{background:rgba(239,68,68,0.15);color:var(--red);}
+  .health-F{background:rgba(239,68,68,0.15);color:var(--red);}
+  .health-na{background:rgba(122,131,152,0.15);color:var(--muted);}
+  .action-strongBuy{background:rgba(34,197,94,0.18);color:var(--green);}
+  .action-buy{background:rgba(34,197,94,0.15);color:var(--green);}
+  .action-add{background:rgba(96,165,250,0.15);color:var(--accent2);}
+  .action-hold{background:rgba(45,212,191,0.15);color:var(--accent);}
+  .action-reduce{background:rgba(245,158,11,0.15);color:var(--amber);}
+  .action-exit{background:rgba(239,68,68,0.15);color:var(--red);}
+  .action-watch{background:rgba(122,131,152,0.15);color:var(--muted);}
+  @media (max-width:640px){
+    .positions-grid{grid-template-columns:1fr;}
+    .pc-metrics-row{grid-template-columns:1fr 1fr;}
+  }
 </style>
 </head>
 <body>
@@ -487,29 +541,26 @@
       </div>
       <!-- Filter / Tag bar -->
       <div id="tagFilterBar" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;align-items:center;padding:2px 0;"></div>
-      <div style="overflow-x:auto;overflow-y:auto;max-height:60vh;border-radius:6px;position:relative;">
-        <table id="positionsTable">
-          <thead>
-            <tr>
-              <th class="sticky-col" onclick="sortBy('ticker')" style="cursor:pointer;">代码 / 备注 <span id="sort_ticker"></span></th>
-              <th onclick="sortBy('qty')" style="cursor:pointer;">数量 <span id="sort_qty"></span></th>
-              <th onclick="sortBy('cost')" style="cursor:pointer;">成本价 <span id="sort_cost"></span></th>
-              <th onclick="sortBy('price')" style="cursor:pointer;">市值/股 <span id="sort_price"></span></th>
-              <th onclick="sortBy('marketValue')" style="cursor:pointer;">市值合计 <span id="sort_marketValue"></span></th>
-              <th onclick="sortBy('pl')" style="cursor:pointer;">盈亏 P/L <span id="sort_pl"></span></th>
-              <th onclick="sortBy('plPct')" style="cursor:pointer;">盈亏 % <span id="sort_plPct"></span></th>
-              <th onclick="sortBy('weight')" style="cursor:pointer;">仓位权重 <span id="sort_weight"></span></th>
-              <th onclick="sortBy('holdDays')" style="cursor:pointer;">持有期 <span id="sort_holdDays"></span></th>
-              <th onclick="sortBy('rMultiple')" style="cursor:pointer;">R倍数 <span id="sort_rMultiple"></span></th>
-              <th onclick="sortBy('status')" style="cursor:pointer;">仓位状态 <span id="sort_status"></span></th>
-              <th>止损价</th>
-              <th>止盈价</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="positionsBody"></tbody>
-        </table>
+      <!-- V1.4: 卡片布局不再有表头列，排序改用下拉+方向按钮，功能与原表头点击排序完全等价 -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--muted);">排序 Sort:</span>
+        <select id="sortColSelect" onchange="setSortCol(this.value)" style="width:auto;min-width:120px;">
+          <option value="sortOrder">手动顺序 Manual</option>
+          <option value="ticker">代码 Ticker</option>
+          <option value="qty">数量 Qty</option>
+          <option value="cost">成本价 Cost</option>
+          <option value="price">现价 Price</option>
+          <option value="marketValue">市值 Value</option>
+          <option value="pl">盈亏 $ P/L</option>
+          <option value="plPct">盈亏 % P/L%</option>
+          <option value="weight">仓位权重 Weight</option>
+          <option value="holdDays">持有期 Held</option>
+          <option value="rMultiple">R倍数 R-Multiple</option>
+          <option value="status">仓位状态 Status</option>
+        </select>
+        <button class="ghost small" onclick="toggleSortDir()" id="sortDirBtn" title="切换升序/降序">▲ 升序</button>
       </div>
+      <div id="positionsCards" class="positions-grid"></div>
       <div class="empty-state" id="emptyState" style="display:none;">
         <div class="big">📭</div>
         <div>暂无持仓，请在上方添加</div>
@@ -612,6 +663,24 @@
           <span>板块集中度 / Sector Concentration (HHI)</span>
         </div>
         <div id="piSectorHHI"></div>
+      </div>
+    </div>
+
+    <!-- V1.5: Industry / Theme exposure -->
+    <div class="grid-2" style="margin-bottom:16px;">
+      <div class="panel">
+        <div class="panel-title">
+          <span>行业敞口 / Industry Exposure</span>
+          <span class="hint">板块(Sector)下一级的细分行业，来自与"板块"相同的数据源</span>
+        </div>
+        <div id="piIndustryExposure"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">
+          <span>主题敞口 / Theme Exposure</span>
+          <span class="hint">按你自己打的标签(Tags)聚合仓位权重，不是数据商分类</span>
+        </div>
+        <div id="piThemeExposure"></div>
       </div>
     </div>
 
@@ -1003,6 +1072,24 @@
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-title">策略绩效统计 / Strategy Performance</div>
       <div id="winRateStats"></div>
+    </div>
+
+    <!-- V1.5: Rolling win rate / rolling return -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title">
+        <span>滚动统计 / Rolling Stats</span>
+        <span class="hint">跟上面的"策略绩效统计"不同，这里是滚动窗口口径（最近N笔/最近N天），能看出趋势是变好还是变差</span>
+      </div>
+      <div id="rollingStatsPanel"></div>
+    </div>
+
+    <!-- Trade Attribution: why did winners win / losers lose -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title">
+        <span>交易归因 / Trade Attribution</span>
+        <span class="hint">平仓时自动记录①②④⑥的出场快照，对比盈利/亏损交易的共同特征</span>
+      </div>
+      <div id="tradeAttributionPanel"></div>
     </div>
 
     <!-- Max Drawdown & Circuit Breaker -->
@@ -3655,6 +3742,106 @@ function percentileRank(current, historyArr){
   return (below/arr.length)*100;
 }
 
+/* ================================================================
+   PATTERN SIGNALS (V1.5) — ATR压缩/量能扩张/Pocket Pivot/VCP近似
+   注意：这四个都是基于K线的技术形态检测，不是精确的行业标准判定——尤其是
+   "VCP近似"，真正的VCP(Volatility Contraction Pattern)需要先识别出实际的
+   摆动高低点分段，这里用固定窗口的区间收缩+量能收缩做简化近似，可能跟严格
+   按缠论/欧奈尔方法画出来的VCP不完全一致，仅供参考，不是精确形态识别。
+   Pocket Pivot按Gil Morales/Chris Kacher的经典定义实现（近10日内最大单日
+   下跌量都不敌今天的上涨量），这个定义相对明确，可信度高于VCP近似。
+   ================================================================ */
+function computePatternSignals(bars, closes, volumes, atrPctSeries){
+  const n = closes.length;
+  if(n<30) return { insufficient:true };
+
+  // ATR压缩：现在的ATR%(相对价格)比20个交易日前收窄了多少
+  const atrPctNow = atrPctSeries[n-1];
+  const atrPctPrior = n>20 ? atrPctSeries[n-1-20] : null;
+  const atrCompressionRatio = (atrPctNow!=null && atrPctPrior!=null && atrPctPrior>0) ? atrPctNow/atrPctPrior : null;
+  const atrCompression = atrCompressionRatio!=null && atrCompressionRatio < 0.7;
+
+  // 量能扩张：最新一天成交量相对近50日均量放大，且当天收涨（放量上涨才有意义，
+  // 放量下跌是另一回事，不算"扩张"信号）
+  const vol50 = volumes.slice(-Math.min(50,n)).reduce((s,v)=>s+v,0)/Math.min(50,n) || 1;
+  const todayVol = volumes[n-1];
+  const volExpansionRatio = vol50>0 ? todayVol/vol50 : null;
+  const volumeExpansion = volExpansionRatio!=null && volExpansionRatio>=1.5 && closes[n-1]>closes[n-2];
+
+  // Pocket Pivot：今天收涨，且今天的量能超过近10个交易日里任何一个下跌日的量能
+  // （经典定义：今日上涨量 > 近10日最大单日下跌量，代表机构在缩量回调后悄悄进场）
+  let pocketPivot = false;
+  if(n>=11 && closes[n-1]>closes[n-2]){
+    let maxDownVol = 0;
+    for(let j=n-11;j<n-1;j++){
+      if(j>0 && closes[j]<closes[j-1]) maxDownVol = Math.max(maxDownVol, volumes[j]);
+    }
+    pocketPivot = volumes[n-1] > maxDownVol;
+  }
+
+  // VCP近似：把最近30个交易日切成3段各10天的窗口，检查"价格区间"和"平均成交量"是否
+  // 逐段收缩（越靠近当下，波动和量能都越小）——真实VCP要求的是多次逐渐收窄的回调，
+  // 这里只是用固定窗口做的粗略近似，标注清楚不是严格判定。
+  let vcpLike = false, vcpDetail = null;
+  if(n>=30){
+    const seg = (start,end) => {
+      const c = closes.slice(start,end), v = volumes.slice(start,end);
+      const hi = Math.max(...c), lo = Math.min(...c);
+      const rangePct = hi>0 ? (hi-lo)/hi*100 : null;
+      const avgVol = v.reduce((s,x)=>s+x,0)/v.length;
+      return { rangePct, avgVol };
+    };
+    const segA = seg(n-10, n);      // 最近10天
+    const segB = seg(n-20, n-10);   // 前一个10天
+    const segC = seg(n-30, n-20);   // 再前一个10天
+    if(segA.rangePct!=null && segB.rangePct!=null && segC.rangePct!=null){
+      const rangeContracting = segA.rangePct < segB.rangePct && segB.rangePct < segC.rangePct;
+      const volContracting = segA.avgVol < segB.avgVol && segB.avgVol < segC.avgVol;
+      vcpLike = rangeContracting && volContracting;
+      vcpDetail = { segA, segB, segC };
+    }
+  }
+
+  return { insufficient:false, atrCompression, atrCompressionRatio, volumeExpansion, volExpansionRatio, pocketPivot, vcpLike, vcpDetail };
+}
+
+/* ================================================================
+   GAP RISK (V1.5⑨) —— 用最近若干个交易日"当天开盘价 vs 前一日收盘价"的隔夜跳空
+   幅度分布，估计这只股票平时跳空有多大。这是纯历史统计，不是对下一次跳空方向/幅度
+   的预测——财报、突发新闻等仍然可能让实际跳空远超历史分布，只能作为"这只股票平时
+   跳空风格"的参考，不能当成风险上限。
+   ================================================================ */
+function computeGapRisk(bars){
+  if(!bars || bars.length<21) return { insufficient:true };
+  const lookback = Math.min(60, bars.length-1);
+  const gaps = [];
+  for(let i=bars.length-lookback;i<bars.length;i++){
+    if(i<1) continue;
+    const prevClose = bars[i-1].c, open = bars[i].o;
+    if(prevClose>0 && open!=null) gaps.push((open-prevClose)/prevClose*100);
+  }
+  if(gaps.length<10) return { insufficient:true };
+  const absGaps = gaps.map(g=>Math.abs(g)).sort((a,b)=>a-b);
+  const avgAbsGap = absGaps.reduce((s,v)=>s+v,0)/absGaps.length;
+  const p90Idx = Math.min(absGaps.length-1, Math.floor(absGaps.length*0.9));
+  const p90AbsGap = absGaps[p90Idx];
+  let level = 'low';
+  if(p90AbsGap>=6) level = 'high';
+  else if(p90AbsGap>=3) level = 'medium';
+  return { insufficient:false, avgAbsGap, p90AbsGap, level, sampleSize:gaps.length };
+}
+
+/* V1.5⑨: 财报距离——直接读取⑨"财报 Earnings"页签已有的数据源（earningsCache，
+   没有的话退回内置近似表BUILTIN_EARNINGS），不新增数据获取。BUILTIN_EARNINGS是
+   手动维护的近似日期表（见该表上方注释），不是实时API拉取，距离计算的准确性完全
+   取决于这张表有没有及时更新。 */
+function earningsDistanceInfo(ticker){
+  const e = (typeof earningsCache!=='undefined' && earningsCache[ticker]) || (typeof BUILTIN_EARNINGS!=='undefined' && BUILTIN_EARNINGS[ticker]);
+  if(!e || !e.date || e.date==='—') return null;
+  const daysUntil = Math.ceil((new Date(e.date) - new Date(todayStr())) / (1000*86400));
+  return { date:e.date, time:e.time, epsEst:e.epsEst, daysUntil };
+}
+
 /* ---------- six-dimension scoring engine ---------- */
 function computeStockScore(ticker, bars, benchBars){
   if(!bars || bars.length < 30){
@@ -3778,10 +3965,21 @@ function computeStockScore(ticker, bars, benchBars){
   const grade = stockGradeOf(composite);
   const signal = stockSignalOf(composite, timingScore);
 
+  // V1.5: 技术形态信号——只做检测和展示/给加仓决策当参考，不参与composite分数计算
+  // （这几个信号本身不是严格标定过的指标，直接混进评分公式风险较高；先作为独立
+  // 展示层和加仓决策的"加分项"使用，观察一段时间再考虑要不要正式纳入权重）。
+  const patternSignals = computePatternSignals(bars, closes, volumes, atrPctSeries);
+
+  // V1.5⑨: 跳空风险(历史统计)+财报距离(读取⑨已有数据源)——同样不参与composite评分，
+  // 只做展示/风险提示层。RS百分位不在这里算，要等"持仓+自选池"全部算完之后统一算，
+  // 见 computeRsPercentiles()。
+  const gapRisk = computeGapRisk(bars);
+  const earningsDistance = earningsDistanceInfo(ticker);
+
   return {
     ticker, barsDate, price, insufficient:false,
     trendScore, momentumScore, rsScore, volumeScore, volatilityScore, timingScore,
-    composite, grade, signal,
+    composite, grade, signal, patternSignals, gapRisk, earningsDistance,
     metrics:{
       ma20:ma20L, ma50:ma50L, ma200: haveMa200?ma200L:null,
       rsi14:rsiL, roc1m, roc3m, rsRaw, atrPct:atrPctL, atrPctile,
@@ -3826,6 +4024,22 @@ function stockMiniBar(score){
   return `<div class="bar-track"><div class="bar-fill" style="width:${clamp(score,0,100)}%;background:${c};"></div></div>`;
 }
 
+/* V1.5⑨: RS百分位——明确限定在"当前持仓 + 自选观察池"内，不是全市场排名。
+   全市场RS百分位需要覆盖成百上千只股票的历史数据同步计算，这个应用逐票顺序请求+
+   本地计算的架构做不到这一点；这里把口径限定在用户自己已经在追踪(持仓/自选)的
+   股票范围内，UI上会明确标注"你的持仓+自选池，非全市场排名"，避免误读。
+   依赖：必须在stockScoreCache里，"持仓+自选池"全部tickers都已经算完分数之后调用，
+   否则百分位只会基于当时已有的部分数据，参照池不完整。 */
+function computeRsPercentiles(){
+  const poolTickers = [...new Set([...heldTickers(), ...watchlist.map(w=>w.ticker)])];
+  const pool = poolTickers.map(t=>stockScoreCache[t]).filter(s=>s && !s.insufficient);
+  const rsValues = pool.map(s=>s.rsScore);
+  pool.forEach(s=>{
+    s.rsPercentile = percentileRank(s.rsScore, rsValues);
+    s.rsPercentilePoolSize = pool.length;
+  });
+}
+
 /* ---------- recalculate all held tickers ---------- */
 async function recalcStockScores(){
   const tickers = heldTickers();
@@ -3837,7 +4051,13 @@ async function recalcStockScores(){
   wrap.classList.add('show');
 
   const benchmark = (settings.benchmarkTicker||'SPY').toUpperCase();
-  const allTickers = [...new Set([...tickers, benchmark])];
+  // V1.5⑨: RS百分位需要一个"持仓+自选"的参照池才有意义（全市场百分位这个应用的
+  // 数据来源和调用频率都做不到）——所以这里把观察名单(watchlist)的代码也一起抓
+  // 数据、算分，写进stockScoreCache。这不会改变heldTickers()驱动的既有渲染范围
+  // （个股智能表格/组合汇总卡片/AI决策引擎等仍然只看持仓），只是多算了几只票的分
+  // 数供RS百分位取参照池用。
+  const watchTickers = watchlist.map(w=>w.ticker).filter(t=>!tickers.includes(t));
+  const allTickers = [...new Set([...tickers, ...watchTickers, benchmark])];
 
   const onProgress = (i, total, t)=>{
     document.getElementById('stockProgressLabel').textContent = `逐票请求中 ${i+1}/${total}: ${t}`;
@@ -3853,6 +4073,13 @@ async function recalcStockScores(){
     if(!b){ failCount++; stockScoreCache[t] = { ticker:t, insufficient:true, error:true }; return; }
     stockScoreCache[t] = computeStockScore(t, b, benchBars);
   });
+  // 自选池代码只用于给RS百分位提供参照，静默失败不计入failCount提示（避免跟"持仓
+  // 数据获取失败"的提示混在一起，让人误以为是持仓本身出了问题）
+  watchTickers.forEach(t=>{
+    const b = barsMap[t];
+    stockScoreCache[t] = b ? computeStockScore(t, b, benchBars) : { ticker:t, insufficient:true, error:true };
+  });
+  computeRsPercentiles(); // V1.5⑨: 依赖上面刚算完的"持仓+自选"完整池子分数
   stockLastCalcTs = Date.now();
   saveStockScores();
 
@@ -3971,13 +4198,39 @@ function renderStockTable(){
         <div class="dim"><div class="dim-head"><span>② 动量 Momentum</span><b>${s.momentumScore.toFixed(0)}</b></div>${stockMiniBar(s.momentumScore)}
           <div class="metrics-line">1月ROC ${m.roc1m!=null?m.roc1m.toFixed(1)+'%':'—'} · 3月ROC ${m.roc3m!=null?m.roc3m.toFixed(1)+'%':'—'} · RSI14 ${m.rsi14!=null?m.rsi14.toFixed(0):'—'}</div></div>
         <div class="dim"><div class="dim-head"><span>③ 相对强度 RS</span><b>${s.rsScore.toFixed(0)}</b></div>${stockMiniBar(s.rsScore)}
-          <div class="metrics-line">相对${(settings.benchmarkTicker||'SPY')}加权超额收益 ${m.rsRaw!=null?(m.rsRaw>=0?'+':'')+m.rsRaw.toFixed(1)+'%':'数据不足'}</div></div>
+          <div class="metrics-line">相对${(settings.benchmarkTicker||'SPY')}加权超额收益 ${m.rsRaw!=null?(m.rsRaw>=0?'+':'')+m.rsRaw.toFixed(1)+'%':'数据不足'}
+          ${s.rsPercentile!=null?`<br>RS百分位 <b>${s.rsPercentile.toFixed(0)}%</b>（你的持仓+自选池内，共${s.rsPercentilePoolSize}只，<span class="lang-en" style="font-size:10px;">非全市场排名</span>）`:''}</div></div>
         <div class="dim"><div class="dim-head"><span>④ 量能 Volume</span><b>${s.volumeScore.toFixed(0)}</b></div>${stockMiniBar(s.volumeScore)}
           <div class="metrics-line">涨跌量比 ${m.upDownRatio.toFixed(2)} · 10/50日量比 ${m.volRatio10_50.toFixed(2)}<br><span class="lang-en">OBV+量价比，免费数据下机构信号代理</span></div></div>
         <div class="dim"><div class="dim-head"><span>⑤ 波动 Volatility</span><b>${s.volatilityScore.toFixed(0)}</b></div>${stockMiniBar(s.volatilityScore)}
           <div class="metrics-line">ATR% ${m.atrPct!=null?m.atrPct.toFixed(2)+'%':'—'} · 百分位 ${m.atrPctile.toFixed(0)}%</div></div>
         <div class="dim"><div class="dim-head"><span>⑥ 时机 Timing</span><b>${s.timingScore.toFixed(0)}</b></div>${stockMiniBar(s.timingScore)}
           <div class="metrics-line">偏离SMA20 ${m.distMa20Pct!=null?(m.distMa20Pct>=0?'+':'')+m.distMa20Pct.toFixed(1)+'%':'—'} · 52周区间位置 ${m.pos52wPct.toFixed(0)}%<br>52周高 ${m.high52.toFixed(2)} / 低 ${m.low52.toFixed(2)}</div></div>
+        ${(()=>{
+          // V1.5: ⑦技术形态信号——检测结果，不参与composite评分，仅供参考
+          const ps = s.patternSignals;
+          if(!ps || ps.insufficient) return `<div class="dim"><div class="dim-head"><span>⑦ 技术形态 Pattern</span></div><div class="metrics-line neu">数据不足，无法检测</div></div>`;
+          const chip = (on, text) => `<span class="auto-signal ${on?'signal-ok':'signal-info'}" style="opacity:${on?1:0.4};">${on?'✓':'·'} ${text}</span>`;
+          return `<div class="dim"><div class="dim-head"><span>⑦ 技术形态 Pattern Signals</span></div>
+            <div class="metrics-line" style="line-height:2.2;">
+              ${chip(ps.atrCompression,'ATR收窄')} ${chip(ps.volumeExpansion,'放量上涨')} ${chip(ps.pocketPivot,'Pocket Pivot')} ${chip(ps.vcpLike,'区间收敛(VCP近似)')}
+              <br><span class="lang-en" style="font-size:10px;">启发式检测，非严格形态判定；不计入综合评分，仅在②仓位状态的加仓信号里作为参考标注</span>
+            </div></div>`;
+        })()}
+        ${(()=>{
+          // V1.5⑨: 财报距离 + 跳空风险——都不参与composite评分，纯展示/风险提示
+          const ed = s.earningsDistance;
+          const gr = s.gapRisk;
+          const edText = ed
+            ? (ed.daysUntil<0 ? `已过（${ed.date}）` : ed.daysUntil===0 ? `今天（${ed.time==='AMC'?'盘后':ed.time==='BMO'?'盘前':ed.time}）` : `${ed.daysUntil}天后 · ${ed.date} ${ed.time==='AMC'?'盘后':ed.time==='BMO'?'盘前':ed.time||''}`)
+            : '暂无财报日期数据（去"财报"页签加载）';
+          const grColor = !gr||gr.insufficient ? 'var(--muted)' : gr.level==='high' ? 'var(--red)' : gr.level==='medium' ? 'var(--amber)' : 'var(--green)';
+          const grText = !gr||gr.insufficient ? '数据不足' : `${gr.level==='high'?'偏高':gr.level==='medium'?'中等':'较低'}（近${gr.sampleSize}日90分位跳空 ${gr.p90AbsGap.toFixed(1)}% · 平均${gr.avgAbsGap.toFixed(1)}%）`;
+          return `<div class="dim"><div class="dim-head"><span>⑧ 财报距离 & 跳空风险</span></div>
+            <div class="metrics-line">距下次财报：${edText}<br>历史隔夜跳空风险：<span style="color:${grColor};font-weight:600;">${grText}</span>
+              <br><span class="lang-en" style="font-size:10px;">财报日期来自内置近似表(BUILTIN_EARNINGS)，手动维护，可能过期；跳空风险是历史统计，不是预测</span>
+            </div></div>`;
+        })()}
       </div>
     </td></tr>`;
     return rowHtml + detailHtml;
@@ -4685,6 +4938,35 @@ function piSectorWeights(weights){
   });
   return bySector;
 }
+// V1.5: Industry是Sector下一级的细分分类，跟sector共用同一个数据源/同一份sectorCache，
+// 只是多读一个字段——不是新增数据抓取。走BUILTIN_SECTORS兜底表的股票（没有真正从FMP
+// 拿到细分行业）industry字段会等于sector本身，即"细分不到更细的粒度"，如实反映，不伪造。
+function piIndustryOf(ticker){
+  const cached = sectorCache[ticker];
+  if(cached && cached.industry && cached.industry!=='Unknown') return cached.industry;
+  return piSectorOf(ticker); // 没有细分行业数据时，退回板块本身作为最粗粒度
+}
+function piIndustryWeights(weights){
+  const byIndustry = {};
+  Object.entries(weights).forEach(([t,w])=>{
+    const ind = piIndustryOf(t);
+    byIndustry[ind] = (byIndustry[ind]||0) + w;
+  });
+  return byIndustry;
+}
+// V1.5: Theme Exposure不是数据商给的分类（数据商不提供"AI概念"这种主题标签），而是复用
+// 你自己在持仓上打的Tags——同一个ticker下不同批次可能打了不同标签，按"该ticker所有批次
+// 标签的并集"分摊到每个标签，一个持仓可以同时计入多个主题。没有任何标签的持仓归入"未标记"。
+function piThemeWeights(weights){
+  const byTag = {};
+  Object.entries(weights).forEach(([t,w])=>{
+    const lots = positions.filter(p=>p.ticker===t);
+    const tags = [...new Set(lots.flatMap(l=>l.tags||[]))];
+    if(tags.length===0){ byTag['未标记']=(byTag['未标记']||0)+w; return; }
+    tags.forEach(tag=>{ byTag[tag] = (byTag[tag]||0) + w; });
+  });
+  return byTag;
+}
 /* Normalized HHI: 0 = perfectly equal-weighted across n items, 1 = fully concentrated in one */
 function piHHI(weightArr){
   const n = weightArr.length;
@@ -4782,6 +5064,36 @@ async function computePortfolioCorrelation(){
 }
 
 /* ---------- composite health score ---------- */
+// V1.5: Heat——组合层面的总敞口风险，把每只持仓"如果现价跌到止损位会损失多少"加总，
+// 除以账户净值，回答"如果所有止损同时触发，账户会损失百分之多少"。优先用④止损引擎的
+// 硬止损，没算过的持仓退回自己设置的止损价（跟持仓卡片的健康分stopCushion分量同一套
+// 优先级），完全没有止损信息的持仓计入unknownTickers、不当0风险处理，heatPct只基于
+// 已知部分计算，如实标注缺口而不是假装已经覆盖全部持仓。
+function computePortfolioHeat(tickers, total){
+  const cashBalance = settings.cashBalance || 0;
+  const accountEquity = total + cashBalance;
+  const cashPct = accountEquity>0 ? cashBalance/accountEquity*100 : null;
+  if(accountEquity<=0) return { heatPct:null, unknownTickers:[], cashPct };
+  let riskSum = 0;
+  const unknownTickers = [];
+  tickers.forEach(t=>{
+    const lots = positions.filter(p=>p.ticker===t);
+    const q = quoteCache[t];
+    const price = q ? q.price : (lots[0] ? lots[0].cost : null);
+    if(price==null){ unknownTickers.push(t); return; }
+    const qty = lots.reduce((s,p)=>s+p.qty,0);
+    const liveStop = resolveLiveStopSelection(stopEngineCache[t]);
+    const engineHardStop = (liveStop && !liveStop.insufficient && !liveStop.notyet) ? (liveStop.exitState?.hardStop?.value ?? null) : null;
+    let stopValue = engineHardStop;
+    if(stopValue==null){
+      const lotStops = lots.map(p=>p.stopLoss).filter(v=>v!=null);
+      if(lotStops.length) stopValue = Math.max(...lotStops);
+    }
+    if(stopValue==null){ unknownTickers.push(t); return; }
+    riskSum += Math.max(0, price-stopValue) * qty;
+  });
+  return { heatPct: riskSum/accountEquity*100, unknownTickers, cashPct };
+}
 function computePortfolioHealth(){
   const { tickers, weights, total } = piPositionWeights();
   if(tickers.length===0) return null;
@@ -4814,12 +5126,44 @@ function computePortfolioHealth(){
     diversificationScore = clamp((1-piCorrState.avgCorr)*50, 0, 100);
   }
 
+  // V1.5: Heat/Cash/Drawdown三个新分量。这次重新分配了权重（原来质量35%/分散度25%/
+  // 持仓集中度25%/板块集中度15%），把"结构分散"类三项(分散度/持仓集中度/板块集中度)
+  // 从65%压缩到40%、质量从35%降到25%，腾出35%给这三项新的"账户当下状态"类指标。
+  // 注意：这次重新分配会让老用户"组合健康分走势"时间线在升级当天出现一次跳变
+  // （之前的历史点是按旧权重算的，之后是新权重），这是预期行为，不是bug。
+  const heatInfo = computePortfolioHeat(tickers, total);
+  // Heat: 已知敞口风险≤5%账户净值 = 100分（健康），≥25% = 0分，线性映射，阈值为启发式估计。
+  const heatScore = heatInfo.heatPct!=null ? clamp(100 - (heatInfo.heatPct-5)/20*100, 0, 100) : null;
+  // Cash: 健康区间大致5%-35%（既有缓冲又没有大量资金空转），两端外温和扣分——不是
+  // "现金越多越健康"也不是"越少越健康"，具体阈值同样是启发式估计，不是精确标定。
+  let cashScore = null;
+  if(heatInfo.cashPct!=null){
+    const c = heatInfo.cashPct;
+    if(c<=0) cashScore = 55;
+    else if(c<15) cashScore = 55 + (c/15)*45;
+    else if(c<=35) cashScore = 100;
+    else cashScore = clamp(100 - (c-35)*1.2, 40, 100);
+  }
+  // Drawdown: 复用Analytics页"最大回撤"同一份navSnapshots数据，算当前距历史净值高点
+  // 的回撤幅度（不是"最大回撤"本身，是"现在"回撤了多少）。0%回撤=100分，回撤≥30%=0分。
+  let drawdownScore = null, currentDrawdownPct = null;
+  if(typeof navSnapshots!=='undefined' && navSnapshots.length>=2){
+    let peak = navSnapshots[0].value;
+    navSnapshots.forEach(s=>{ if(s.value>peak) peak = s.value; });
+    const current = navSnapshots[navSnapshots.length-1].value;
+    currentDrawdownPct = peak>0 ? (current-peak)/peak*100 : 0;
+    drawdownScore = clamp(100 - Math.abs(currentDrawdownPct)/30*100, 0, 100);
+  }
+
   // Renormalize composite weights over whatever components are actually available
   const parts = [
-    { key:'quality', score:qualityScore, w:0.35 },
-    { key:'diversification', score:diversificationScore, w:0.25 },
-    { key:'concentration', score:concScore, w:0.25 },
-    { key:'sectorConcentration', score:sectorConcScore, w:0.15 }
+    { key:'quality', score:qualityScore, w:0.25 },
+    { key:'diversification', score:diversificationScore, w:0.15 },
+    { key:'concentration', score:concScore, w:0.15 },
+    { key:'sectorConcentration', score:sectorConcScore, w:0.10 },
+    { key:'cash', score:cashScore, w:0.10 },
+    { key:'heat', score:heatScore, w:0.15 },
+    { key:'drawdown', score:drawdownScore, w:0.10 }
   ];
   const availW = parts.filter(p=>p.score!=null).reduce((s,p)=>s+p.w,0);
   const health = availW>0
@@ -4832,6 +5176,9 @@ function computePortfolioHealth(){
     posHHI, concScore,
     sectorW, sectorHHI, sectorConcScore,
     diversificationScore, corrStale,
+    heatPct: heatInfo.heatPct, heatScore, heatUnknownTickers: heatInfo.unknownTickers,
+    cashPct: heatInfo.cashPct, cashScore,
+    currentDrawdownPct, drawdownScore,
     health, grade: health!=null ? stockGradeOf(health) : null
   };
 }
@@ -4872,6 +5219,37 @@ function piFlagsOf(intel){
   if(intel.missingQuality>0){
     flags.push({ level:'neu', text:`ℹ ${intel.missingQuality}只持仓尚无个股评分，请在"个股智能"计算` });
   }
+  // V1.5: Heat/Cash/Drawdown 提示
+  if(intel.heatPct!=null){
+    if(intel.heatPct>=20){
+      flags.push({ level:'warn', text:`⚠ 组合敞口热度${intel.heatPct.toFixed(1)}%（若所有止损同时触发的预计损失占账户净值比例），偏高` });
+    } else {
+      flags.push({ level:'ok', text:`✅ 组合敞口热度${intel.heatPct.toFixed(1)}%，处于合理范围` });
+    }
+  }
+  if(intel.heatUnknownTickers && intel.heatUnknownTickers.length>0){
+    flags.push({ level:'neu', text:`ℹ ${intel.heatUnknownTickers.join('、')} 缺少止损/现价数据，未计入敞口热度，实际热度不低于此数` });
+  }
+  if(intel.currentDrawdownPct!=null && intel.currentDrawdownPct<=-10){
+    flags.push({ level:'warn', text:`⚠ 当前较净值高点回撤${Math.abs(intel.currentDrawdownPct).toFixed(1)}%` });
+  }
+  // V1.5⑨: 财报临近+跳空风险提示——直接读取①个股评分缓存里的gapRisk和"财报"页
+  // 已有的数据源，不重新拉数据；只检查当前持仓范围内的代码，跟RS百分位一样限定在
+  // "你已经在追踪的股票"，不是全市场扫描。
+  if(intel.tickers && intel.tickers.length>0){
+    const soonList = [];
+    intel.tickers.forEach(t=>{
+      const ed = earningsDistanceInfo(t);
+      if(ed && ed.daysUntil>=0 && ed.daysUntil<=5){
+        const gr = stockScoreCache[t] && stockScoreCache[t].gapRisk;
+        soonList.push({ t, days:ed.daysUntil, gapLevel: gr && !gr.insufficient ? gr.level : null });
+      }
+    });
+    if(soonList.length>0){
+      const desc = soonList.map(s=>`${s.t}(${s.days}天${s.gapLevel==='high'?'·历史跳空偏高':s.gapLevel==='medium'?'·历史跳空中等':''})`).join('、');
+      flags.push({ level:'warn', text:`⚠ ${soonList.length}只持仓将在5天内公布财报：${desc}，财报前后跳空风险较高，建议提前复核仓位规模/止损设置` });
+    }
+  }
   return flags;
 }
 
@@ -4881,6 +5259,8 @@ function renderPortfolioIntel(){
   const flagsEl = document.getElementById('piFlagsPanel');
   const posHHIEl = document.getElementById('piPositionHHI');
   const sectorHHIEl = document.getElementById('piSectorHHI');
+  const industryEl = document.getElementById('piIndustryExposure');
+  const themeEl = document.getElementById('piThemeExposure');
   const corrEl = document.getElementById('piCorrMatrix');
   const metaEl = document.getElementById('piCorrMeta');
   if(!cardsEl) return;
@@ -4890,6 +5270,7 @@ function renderPortfolioIntel(){
     cardsEl.innerHTML = '';
     flagsEl.innerHTML = '<div class="empty-state"><div class="big">🧭</div>暂无持仓可供分析<br><span class="lang-en">请先在"持仓明细"添加代码</span></div>';
     posHHIEl.innerHTML = ''; sectorHHIEl.innerHTML = '';
+    if(industryEl) industryEl.innerHTML = ''; if(themeEl) themeEl.innerHTML = '';
     try{ renderCapitalEfficiency(); }catch(e){}
     try{ renderCorrelationClusters(); }catch(e){}
     try{ renderPortfolioTimelinePanel(); }catch(e){} // module⑩: timeline persists even with no current holdings
@@ -4905,22 +5286,37 @@ function renderPortfolioIntel(){
     <div class="card">
       <div class="card-label">个股质量 Quality</div>
       <div class="card-value" style="color:${intel.qualityScore!=null?stockScoreColor(intel.qualityScore):'var(--muted)'};">${intel.qualityScore!=null?intel.qualityScore.toFixed(1):'—'}</div>
-      <div class="card-sub neu">价值加权 · 权重35%</div>
+      <div class="card-sub neu">价值加权 · 权重25%</div>
     </div>
     <div class="card">
       <div class="card-label">分散度 Diversification</div>
       <div class="card-value" style="color:${intel.diversificationScore!=null?stockScoreColor(intel.diversificationScore):'var(--muted)'};">${intel.diversificationScore!=null?intel.diversificationScore.toFixed(1):'—'}</div>
-      <div class="card-sub neu">${intel.corrStale?'待计算 · 权重25%':'平均相关性 '+piCorrState.avgCorr.toFixed(2)}</div>
+      <div class="card-sub neu">${intel.corrStale?'待计算 · 权重15%':'平均相关性 '+piCorrState.avgCorr.toFixed(2)}</div>
     </div>
     <div class="card">
       <div class="card-label">持仓集中度 Concentration</div>
       <div class="card-value" style="color:${stockScoreColor(intel.concScore)};">${intel.concScore.toFixed(1)}</div>
-      <div class="card-sub neu">HHI ${(intel.posHHI.raw*10000).toFixed(0)} · 权重25%</div>
+      <div class="card-sub neu">HHI ${(intel.posHHI.raw*10000).toFixed(0)} · 权重15%</div>
     </div>
     <div class="card">
       <div class="card-label">板块集中度 Sector Conc.</div>
       <div class="card-value" style="color:${stockScoreColor(intel.sectorConcScore)};">${intel.sectorConcScore.toFixed(1)}</div>
-      <div class="card-sub neu">HHI ${(intel.sectorHHI.raw*10000).toFixed(0)} · 权重15%</div>
+      <div class="card-sub neu">HHI ${(intel.sectorHHI.raw*10000).toFixed(0)} · 权重10%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">敞口热度 Heat</div>
+      <div class="card-value" style="color:${intel.heatScore!=null?stockScoreColor(intel.heatScore):'var(--muted)'};">${intel.heatScore!=null?intel.heatScore.toFixed(1):'—'}</div>
+      <div class="card-sub neu">${intel.heatPct!=null?`若全部止损触发预计损失${intel.heatPct.toFixed(1)}%净值`:'待计算'} · 权重15%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">现金缓冲 Cash</div>
+      <div class="card-value" style="color:${intel.cashScore!=null?stockScoreColor(intel.cashScore):'var(--muted)'};">${intel.cashScore!=null?intel.cashScore.toFixed(1):'—'}</div>
+      <div class="card-sub neu">${intel.cashPct!=null?`现金占净值${intel.cashPct.toFixed(1)}%`:'未设置现金余额'} · 权重10%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">当前回撤 Drawdown</div>
+      <div class="card-value" style="color:${intel.drawdownScore!=null?stockScoreColor(intel.drawdownScore):'var(--muted)'};">${intel.drawdownScore!=null?intel.drawdownScore.toFixed(1):'—'}</div>
+      <div class="card-sub neu">${intel.currentDrawdownPct!=null?`距净值高点${intel.currentDrawdownPct.toFixed(1)}%`:'需≥2个净值快照'} · 权重10%</div>
     </div>
   `;
 
@@ -4978,6 +5374,31 @@ function renderPortfolioIntel(){
       </div>
     `).join('')}
   `;
+
+  // V1.5: Industry exposure panel — same bar-list pattern as Sector, one level finer
+  if(industryEl){
+    const industryW = piIndustryWeights(intel.weights);
+    const sortedInd = Object.entries(industryW).sort((a,b)=>b[1]-a[1]);
+    industryEl.innerHTML = sortedInd.length ? sortedInd.map(([ind,w])=>`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <span style="min-width:140px;font-size:12px;">${escapeHtml(ind)}</span>
+        <div class="bar-track" style="flex:1;"><div class="bar-fill" style="width:${(w*100).toFixed(1)}%;background:${w>0.40?'var(--red)':'var(--accent2)'};"></div></div>
+        <span style="min-width:48px;text-align:right;font-family:var(--mono);font-size:12px;">${(w*100).toFixed(1)}%</span>
+      </div>
+    `).join('') : '<div class="hint">尚无行业数据，点击"组合智能"页签的行业分布图按钮拉取</div>';
+  }
+  // V1.5: Theme exposure panel — aggregated from user-assigned Tags, not a data-provider taxonomy
+  if(themeEl){
+    const themeW = piThemeWeights(intel.weights);
+    const sortedTheme = Object.entries(themeW).sort((a,b)=>b[1]-a[1]);
+    themeEl.innerHTML = sortedTheme.length ? sortedTheme.map(([tag,w])=>`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <span style="min-width:140px;font-size:12px;">${tag==='未标记'?`<span class="neu">${tag}</span>`:`<span class="lot-tag">${escapeHtml(tag)}</span>`}</span>
+        <div class="bar-track" style="flex:1;"><div class="bar-fill" style="width:${(w*100).toFixed(1)}%;background:var(--accent);"></div></div>
+        <span style="min-width:48px;text-align:right;font-family:var(--mono);font-size:12px;">${(w*100).toFixed(1)}%</span>
+      </div>
+    `).join('') : '<div class="hint">暂无标签数据，可在持仓明细里给批次打标签</div>';
+  }
 
   // Correlation matrix
   if(!piCorrState || piCorrState.tickersKey !== piTickersKey(intel.tickers)){
@@ -5811,28 +6232,184 @@ function computePositionStatus(ticker, lots, price, weight){
     // and check the risk of (current position + that assumed add) against the
     // cap, not just the current position alone.
     let positionRiskOk = true, projectedRiskPct = 0, addSizePct = settings.pyramidAddSizePct ?? 50;
+    const hardStopValue = stopObj.exitState.hardStop.value;
     {
       const { total } = piPositionWeights();
       const accountEquity = total + (settings.cashBalance || 0);
       const maxPositionRiskPct = settings.maxPositionRiskPct ?? 1;
       const qty = lots.reduce((s,p)=>s+p.qty,0);
-      const hardStopValue = stopObj.exitState.hardStop.value;
       const perShareRisk = Math.max(0, price - hardStopValue);
       const addQty = qty * addSizePct / 100;
       const projectedRiskAmount = perShareRisk * (qty + addQty);
       projectedRiskPct = accountEquity>0 ? (projectedRiskAmount/accountEquity*100) : 0;
       positionRiskOk = projectedRiskPct <= maxPositionRiskPct;
     }
-    if(hardStopIntact && weeklyOk && marketOk && momentumOk && positionRiskOk){
-      return { code:'add', ...POSITION_STATUS_META.add, reason:`${scoreTxt} · ${rTxt} · 硬止损未破(现价${fmt$(price)}>${fmt$(stopObj.exitState.hardStop.value)}) · 周线未转弱 · 大盘非熊市 · 日线动量转强 · 假设加仓${addSizePct}%仓位后预计风险${projectedRiskPct.toFixed(2)}%未超单笔上限(${(settings.maxPositionRiskPct??1)}%) — 回调确认加仓候选（仍需人工核实结构与成交量，非自动加仓许可）` };
+    // V1.5 gate⑥ — 剩余空间/EV核查：前面几道门槛全过，不代表这时候加仓划算——如果
+    // 现价已经很接近计划中的下一个止盈目标（TP1/TP2，复用V1.3统一的getEffectiveTpTarget，
+    // 不另建一套目标价），继续加仓等于在"剩余上涨空间很小"的地方加码，胜率没变但赔率变差了；
+    // 同理如果剩余盈亏比（到止盈的距离 ÷ 到硬止损的距离）已经小于1，新加的这一份仓位本身
+    // 就是一笔"输面大于赢面"的下注，即使原持仓整体仍然健康。
+    // 没有设定固定止盈目标（比如已进入Runner阶段、或从未设置分批止盈计划）时，没有基准可比，
+    // 此项不拦截——这跟"数据缺失"不同：没有止盈计划本身不代表加仓有隐藏风险，只是没法对这
+    // 一项做核查，如实说明即可，不必比照④止损引擎那样fail-closed。
+    const effTargets = lots.map(p=>getEffectiveTpTarget(p)).filter(e=>e.price!=null && e.price>price);
+    const nearestTp = effTargets.length ? effTargets.reduce((a,b)=>a.price<b.price?a:b) : null;
+    const riskRemaining = Math.max(0, price - hardStopValue);
+    let evOk = true, evNote = '未设固定止盈目标(Runner阶段或未设置分批止盈计划)，无法核查剩余空间/盈亏比，此项不拦截';
+    if(nearestTp){
+      const rewardRemaining = nearestTp.price - price;
+      const rewardPct = (rewardRemaining/price)*100;
+      const rrRatio = riskRemaining>0 ? rewardRemaining/riskRemaining : null;
+      const tooClose = rewardPct < 5; // 距止盈目标不足5%，上涨空间已经很有限
+      const badRR = rrRatio!=null && rrRatio < 1; // 剩余风险已经大于剩余回报
+      evOk = !tooClose && !badRR;
+      evNote = `距${nearestTp.label}还有${rewardPct.toFixed(1)}%${rrRatio!=null?`，剩余盈亏比${rrRatio.toFixed(2)}`:''}`;
+    }
+    if(hardStopIntact && weeklyOk && marketOk && momentumOk && positionRiskOk && evOk){
+      // V1.5: 技术形态信号(⑤ATR压缩/量能扩张/Pocket Pivot/VCP近似)只作为加仓信号的
+      // "加强/减弱"参考——不改变add的判定门槛(仍然是上面五道硬门槛决定)，只在理由
+      // 文案里如实列出有几项形态信号同时确认，命中≥2项时标记为"加仓候选(强)"。这些
+      // 信号本身是启发式近似（尤其VCP），不作为单独的放行/拦截条件，避免把还没验证过
+      // 可靠性的信号当成硬门槛。
+      const ps = scoreObjForMomentum.patternSignals;
+      const psHits = [];
+      if(ps && !ps.insufficient){
+        if(ps.atrCompression) psHits.push('ATR收窄');
+        if(ps.volumeExpansion) psHits.push('放量上涨');
+        if(ps.pocketPivot) psHits.push('Pocket Pivot');
+        if(ps.vcpLike) psHits.push('区间收敛(VCP近似)');
+      }
+      const patternNote = psHits.length ? ` · 技术形态确认:${psHits.join('/')}` : '';
+      const strongAdd = psHits.length>=2;
+      return { code:'add', ...POSITION_STATUS_META.add, strongAdd,
+        reason:`${scoreTxt} · ${rTxt} · 硬止损未破(现价${fmt$(price)}>${fmt$(hardStopValue)}) · 周线未转弱 · 大盘非熊市 · 日线动量转强 · 假设加仓${addSizePct}%仓位后预计风险${projectedRiskPct.toFixed(2)}%未超单笔上限(${(settings.maxPositionRiskPct??1)}%) · ${evNote}${patternNote} — 回调确认${strongAdd?'加仓候选(强)':'加仓候选'}（仍需人工核实结构与成交量，非自动加仓许可）` };
     } else if(hardStopIntact && weeklyOk && marketOk && momentumOk && !positionRiskOk){
       return { code:'strongHold', ...POSITION_STATUS_META.strongHold, reason:`${scoreTxt} · ${rTxt} · ${wTxt} · 假设加仓${addSizePct}%仓位后预计风险${projectedRiskPct.toFixed(2)}%将超过单笔风险上限(${(settings.maxPositionRiskPct??1)}%账户净值)，暂不建议加仓` };
+    } else if(hardStopIntact && weeklyOk && marketOk && momentumOk && positionRiskOk && !evOk){
+      return { code:'strongHold', ...POSITION_STATUS_META.strongHold, reason:`${scoreTxt} · ${rTxt} · ${wTxt} · 其余加仓门槛均已通过，但${evNote}，加仓性价比不足，暂不建议` };
     }
   }
   return { code:'strongHold', ...POSITION_STATUS_META.strongHold, reason:`${scoreTxt} · ${rTxt} · ${wTxt}` };
 }
 function statusBadgeHtml(statusInfo){
   return `<span class="status-badge status-${statusInfo.code}" title="${escapeHtml(statusInfo.reason)}">${statusInfo.label}</span>`;
+}
+
+/* ================================================================
+   POSITION HEALTH SCORE (V1.4) — 持仓健康分
+   0-100的单一分数，用于卡片布局里"一眼判断这仓位结构是否健康"，不是盈亏的
+   另一种说法（那是下面 pl/plPct 的事）。只读取已有引擎的输出，不重新拉取/
+   计算任何底层指标：
+     · quality      35% —— ①个股综合评分 stockScoreCache
+     · stopCushion  30% —— ④五层引擎硬止损缓冲空间（引擎未算过时退回手动止损价，
+                            并在title里注明用的哪个来源，避免像V1.3修复前TP三套
+                            数字那样悄悄混用却不说明白）
+     · rMultiple    20% —— 当前R倍数表现
+     · regime       15% —— ⑥大盘环境
+   任一分量缺数据 = 不参与加权（按剩余分量重新归一化），不是当0分处理；
+   四项全缺 = score:null，UI显示"数据不足"而不是伪造一个中性分数掩盖信息缺口。
+   ================================================================ */
+const POSITION_HEALTH_WEIGHTS = { quality:0.35, stopCushion:0.30, rMultiple:0.20, regime:0.15 };
+const POSITION_HEALTH_MISSING_LABEL = { quality:'①个股评分', stopCushion:'④止损引擎/止损价', rMultiple:'R倍数(需先设止损)', regime:'⑥大盘环境' };
+function computePositionHealth(ticker, lots, price){
+  const parts = [];
+
+  const scoreObj = stockScoreCache[ticker];
+  if(scoreObj && !scoreObj.insufficient && typeof scoreObj.composite==='number'){
+    parts.push({ key:'quality', score:scoreObj.composite, w:POSITION_HEALTH_WEIGHTS.quality,
+      note:`个股评分${scoreObj.composite.toFixed(0)}` });
+  }
+
+  const liveStop = resolveLiveStopSelection(stopEngineCache[ticker]);
+  const engineHardStop = (liveStop && !liveStop.insufficient && !liveStop.notyet)
+    ? (liveStop.exitState?.hardStop?.value ?? null) : null;
+  if(price!=null && engineHardStop!=null){
+    const breached = price<=engineHardStop;
+    const cushionPct = breached ? 0 : (price-engineHardStop)/price*100;
+    // 0%缓冲=0分，≥18%缓冲=100分（18%大致对应常见ATR止损的典型距离），线性映射，
+    // 具体阈值是启发式估计，不是精确的统计标定
+    const cushionScore = breached ? 0 : clamp(cushionPct/18*100, 0, 100);
+    parts.push({ key:'stopCushion', score:cushionScore, w:POSITION_HEALTH_WEIGHTS.stopCushion,
+      note: breached ? '硬止损已被击穿(④引擎)' : `距④引擎硬止损缓冲${cushionPct.toFixed(1)}%` });
+  } else if(price!=null){
+    const lotStops = lots.map(p=>p.stopLoss).filter(v=>v!=null);
+    if(lotStops.length){
+      // 多批次取"最紧"的一档（最高的止损价=最先被触发=最能代表当前实际保护水平）
+      const tightestStop = Math.max(...lotStops);
+      const breached = price<=tightestStop;
+      const cushionPct = breached ? 0 : (price-tightestStop)/price*100;
+      const cushionScore = breached ? 0 : clamp(cushionPct/18*100, 0, 100);
+      parts.push({ key:'stopCushion', score:cushionScore, w:POSITION_HEALTH_WEIGHTS.stopCushion,
+        note: breached ? '止损价已被击穿(手动止损价，④引擎未计算)' : `距止损价缓冲${cushionPct.toFixed(1)}%(手动止损价，④引擎未计算)` });
+    }
+  }
+
+  const rMultiple = calcGroupRMultiple(lots, price);
+  if(rMultiple!=null){
+    let rScore;
+    if(rMultiple<=-1) rScore = 0;
+    else if(rMultiple<0) rScore = 50*(rMultiple+1);
+    else if(rMultiple<2) rScore = 50 + 25*rMultiple;
+    else rScore = 100;
+    parts.push({ key:'rMultiple', score:clamp(rScore,0,100), w:POSITION_HEALTH_WEIGHTS.rMultiple,
+      note:`R倍数${rMultiple>=0?'+':''}${rMultiple.toFixed(2)}R` });
+  }
+
+  const regime = getMarketRegimeInfo();
+  if(regime){
+    const regimeScore = regime.regime==='BULL' ? 100 : (regime.regime==='BEAR' ? 15 : 55);
+    parts.push({ key:'regime', score:regimeScore, w:POSITION_HEALTH_WEIGHTS.regime, note:`大盘${regime.label}` });
+  }
+
+  const availW = parts.reduce((s,p)=>s+p.w,0);
+  const allKeys = Object.keys(POSITION_HEALTH_WEIGHTS);
+  const missing = allKeys.filter(k=>!parts.some(p=>p.key===k)).map(k=>POSITION_HEALTH_MISSING_LABEL[k]);
+  if(availW===0){
+    return { score:null, grade:null, parts:[], missing };
+  }
+  const score = parts.reduce((s,p)=>s+p.score*(p.w/availW), 0);
+  const grade = score>=80?'A':score>=65?'B':score>=50?'C':score>=35?'D':'F';
+  return { score, grade, parts, missing, coveragePct: availW*100 };
+}
+function healthBadgeHtml(health){
+  if(health.score==null){
+    return `<span class="status-badge health-na" title="健康分所需数据（①个股评分/④止损引擎或止损价/R倍数/⑥大盘环境）全部缺失，暂无法计算">健康分 —</span>`;
+  }
+  const titleParts = health.parts.map(p=>p.note);
+  if(health.missing.length) titleParts.push(`缺失：${health.missing.join('、')}（已按剩余分量重新加权，非当0分处理）`);
+  return `<span class="status-badge health-${health.grade}" title="${escapeHtml(titleParts.join(' · '))}">健康 ${health.score.toFixed(0)}${health.missing.length?'*':''}</span>`;
+}
+function stopLadderHtml(ticker, price){
+  const liveStop = resolveLiveStopSelection(stopEngineCache[ticker]);
+  if(!liveStop || liveStop.notyet){
+    return `<div class="stop-ladder"><span class="stop-ladder-label">五层止损</span><span class="neu" style="font-size:11px;">尚未计算</span></div>`;
+  }
+  if(liveStop.insufficient){
+    return `<div class="stop-ladder"><span class="stop-ladder-label">五层止损</span><span style="color:var(--red);font-size:11px;">数据不足</span></div>`;
+  }
+  const layers = [
+    { key:'atr', label:'ATR', value: liveStop.atrTrailingStop },
+    { key:'trend', label:'趋势', value: liveStop.trendStop },
+    { key:'structure', label:'结构', value: liveStop.structureStop },
+    { key:'profitLock', label:'锁利', value: liveStop.profitLockStop },
+    { key:'emergency', label:'紧急', value: liveStop.emergencyStop },
+  ];
+  const dots = layers.map(l=>{
+    if(l.value==null) return `<span class="stop-dot stop-dot-na" title="${l.label}：未启用/无数据">${l.label[0]}</span>`;
+    const breached = price!=null && price<=l.value;
+    const isHard = liveStop.hardStop && liveStop.hardStop.key===l.key;
+    const cls = breached ? 'stop-dot-breach' : 'stop-dot-ok';
+    return `<span class="stop-dot ${cls}${isHard?' stop-dot-active':''}" title="${l.label}${isHard?'（当前硬止损 Hard Stop）':''}：${fmt$(l.value)}${breached?' — 已跌破':''}">${l.label[0]}</span>`;
+  }).join('');
+  return `<div class="stop-ladder"><span class="stop-ladder-label">五层止损</span>${dots}</div>`;
+}
+function todayActionBadgeHtml(decision){
+  if(!decision) return `<span class="status-badge action-watch" title="AI决策引擎数据不足">今日行动 —</span>`;
+  const a = decision.action;
+  const statusReason = decision.reasons[1] || '';
+  const qcReason = decision.reasons[decision.reasons.length-1] || '';
+  const title = `${a.label} · 置信度${decision.confidence}(${decision.confidenceLabel}) — ${statusReason} · ${qcReason}`;
+  return `<span class="status-badge action-${decision.actionCode}" title="${escapeHtml(title)}">${a.label} · ${decision.confidenceLabel}</span>`;
 }
 
 /* ================================================================
@@ -5984,7 +6561,12 @@ function computeQualityControl(ticker, opts){
 }
 
 // Core aggregator for a single held ticker. Reads (never recomputes) modules ①②③④.
-function computeAIDecision(ticker){
+// V1.4: 新增可选的 cachedHealth 参数——卡片布局需要对每一只持仓都调用一次
+// computeAIDecision()，如果每次都在内部重新跑一遍 computePortfolioHealth()
+// （本身是O(持仓数)的组合级计算），整体会变成O(n²)。调用方（如renderPositions）
+// 可以在循环外算一次health、传进来复用；不传时行为与之前完全一致（自己算一次），
+// 不影响 computeDailyBriefing() 等既有调用方。
+function computeAIDecision(ticker, cachedHealth){
   const lots = positions.filter(p=>p.ticker===ticker);
   if(lots.length===0) return null;
   const price = aiCurrentPrice(ticker, lots);
@@ -6126,7 +6708,7 @@ function computeAIDecision(ticker){
 
   // R8 — module⑧-B Quality Control Engine：在最终给出建议前做内部一致性复核
   // （数据完整性 / 与Conflict Engine高等级矛盾联动 / 板块超配仍加仓 / 数据缺失却高置信度）
-  const health = computePortfolioHealth();
+  const health = cachedHealth !== undefined ? cachedHealth : computePortfolioHealth();
   const qc = computeQualityControl(ticker, { hasScore, hasStop, actionCode, confidence, conflict, health });
   reasons.push(`【⑧ 信号质量】${qc.label} — ${qc.notes.join('；')}`);
   if(qc.level==='conflict') confidence = Math.min(confidence, 55); // 内部矛盾时强制封顶置信度
@@ -7168,6 +7750,93 @@ function advanceRunnerState(p, isFullClose, sellPrice){
     runner.remainingQty = 0;
   }
 }
+/* ================================================================
+   TRADE ATTRIBUTION (V1.5) — 出场归因快照 + 赢/亏归因统计
+   平仓那一刻，①个股评分②④止损引擎⑥大盘环境③组合健康分早就已经算出来挂在
+   缓存里了，只是以前从来没有人在平仓时把这些数字"拍一张照片"存下来——一旦
+   仓位被删掉，这些上下文就永久丢了，没法回答"当时是什么情况下赚的/亏的"。
+   这里只读缓存，不重新计算、不重新拉取行情。
+   ================================================================ */
+function buildExitAttributionSnapshot(ticker){
+  const scoreObj = stockScoreCache[ticker];
+  const hasScore = !!(scoreObj && !scoreObj.insufficient);
+  const stopObj = resolveLiveStopSelection(stopEngineCache[ticker]);
+  const hasStop = !!(stopObj && !stopObj.insufficient && !stopObj.notyet);
+  const regime = getMarketRegimeInfo();
+  const health = computePortfolioHealth();
+  return {
+    composite: hasScore ? scoreObj.composite : null,
+    grade: hasScore ? scoreObj.grade : null,
+    trendScore: hasScore ? scoreObj.trendScore : null,
+    momentumScore: hasScore ? scoreObj.momentumScore : null,
+    weeklyVerdict: hasStop ? stopObj.weeklyVerdict : null,
+    hardStopBreached: hasStop ? !!(stopObj.exitState?.hardStop?.breached) : null,
+    breachedLayerCount: hasStop ? (stopObj.breachedLayers?.length ?? null) : null,
+    marketRegime: regime ? regime.regime : null,
+    portfolioHealth: (health && health.health!=null) ? Math.round(health.health*10)/10 : null
+  };
+}
+// 汇总赢/亏两组交易在出场快照各维度上的均值/分布，回答"为什么赚钱/为什么亏钱"。
+// 只统计带exitSnapshot字段的记录（V1.5之后平仓的交易），V1.5之前的历史记录
+// 没有这个字段，如实排除在外，不做插值/假设。
+function computeTradeAttribution(){
+  const withSnapshot = closedTrades.filter(t=>t.exitSnapshot);
+  if(withSnapshot.length===0) return null;
+  const wins = withSnapshot.filter(t=>t.realizedPL>0);
+  const losses = withSnapshot.filter(t=>t.realizedPL<=0);
+  const avgOf = (arr, key) => {
+    const vals = arr.map(t=>t.exitSnapshot[key]).filter(v=>v!=null);
+    return vals.length ? vals.reduce((s,v)=>s+v,0)/vals.length : null;
+  };
+  const distOf = (arr, key) => {
+    const counts = {};
+    arr.forEach(t=>{ const v = t.exitSnapshot[key]; if(v) counts[v]=(counts[v]||0)+1; });
+    return counts;
+  };
+  const groupStats = (arr) => ({
+    count: arr.length,
+    avgComposite: avgOf(arr,'composite'), avgTrend: avgOf(arr,'trendScore'), avgMomentum: avgOf(arr,'momentumScore'),
+    avgPortfolioHealth: avgOf(arr,'portfolioHealth'),
+    hardStopBreachedPct: arr.length ? arr.filter(t=>t.exitSnapshot.hardStopBreached===true).length/arr.length*100 : null,
+    regimeDist: distOf(arr,'marketRegime'), weeklyDist: distOf(arr,'weeklyVerdict')
+  });
+  return { totalWithSnapshot: withSnapshot.length, totalAll: closedTrades.length, wins: groupStats(wins), losses: groupStats(losses) };
+}
+function renderTradeAttribution(){
+  const el = document.getElementById('tradeAttributionPanel');
+  if(!el) return;
+  const attr = computeTradeAttribution();
+  if(!attr){
+    el.innerHTML = `<div class="lang-en" style="padding:8px 0;color:var(--muted);">暂无归因数据——需要至少一笔V1.5之后平仓的交易（出场时会自动记录①②④⑥的快照）</div>`;
+    return;
+  }
+  const regimeLabel = { BULL:'牛市', BEAR:'熊市', CHOP:'震荡' };
+  const weeklyLabel = { hold:'向好', exit:'转弱' };
+  const fmtDist = (dist, labelMap) => {
+    const entries = Object.entries(dist);
+    if(!entries.length) return '—';
+    return entries.map(([k,v])=>`${labelMap[k]||k} ${v}笔`).join(' · ');
+  };
+  const row = (label, w, l, fmtFn) => `
+    <div style="display:grid;grid-template-columns:140px 1fr 1fr;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;align-items:center;">
+      <span class="neu">${label}</span>
+      <span style="color:var(--green);">${fmtFn(w)}</span>
+      <span style="color:var(--red);">${fmtFn(l)}</span>
+    </div>`;
+  el.innerHTML = `
+    <div class="hint" style="margin-bottom:8px;">共${attr.totalAll}笔平仓记录，其中${attr.totalWithSnapshot}笔带出场归因快照（V1.5之后平仓的交易）；下面按盈利/亏损分组对比出场当下的上下文均值，不代表因果关系，仅供复盘参考。</div>
+    <div style="display:grid;grid-template-columns:140px 1fr 1fr;gap:10px;padding-bottom:6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);font-weight:600;">
+      <span></span><span>🟢 盈利交易(${attr.wins.count}笔)</span><span>🔴 亏损交易(${attr.losses.count}笔)</span>
+    </div>
+    ${row('平均综合评分', attr.wins, attr.losses, g=>g.avgComposite!=null?g.avgComposite.toFixed(1):'—')}
+    ${row('平均趋势分', attr.wins, attr.losses, g=>g.avgTrend!=null?g.avgTrend.toFixed(1):'—')}
+    ${row('平均动量分', attr.wins, attr.losses, g=>g.avgMomentum!=null?g.avgMomentum.toFixed(1):'—')}
+    ${row('平均组合健康分', attr.wins, attr.losses, g=>g.avgPortfolioHealth!=null?g.avgPortfolioHealth.toFixed(1):'—')}
+    ${row('出场时硬止损已破%', attr.wins, attr.losses, g=>g.hardStopBreachedPct!=null?g.hardStopBreachedPct.toFixed(0)+'%':'—')}
+    ${row('大盘环境分布', attr.wins, attr.losses, g=>fmtDist(g.regimeDist, regimeLabel))}
+    ${row('周线大局分布', attr.wins, attr.losses, g=>fmtDist(g.weeklyDist, weeklyLabel))}
+  `;
+}
 function confirmClosePosition(){
   if(!pendingCloseId) return;
   const p = positions.find(p=>p.id===pendingCloseId);
@@ -7226,7 +7895,11 @@ function confirmClosePosition(){
     initialRiskAuditLog: cloneSafe(p.initialRiskAuditLog) || [],
     initialEmergencyStop: p.initialEmergencyStop ?? null,
     exitPlanSnapshot: cloneSafe(p.exitPlan),
-    realizedR
+    realizedR,
+    // V1.5: 出场归因快照——见buildExitAttributionSnapshot()，只读已有缓存，
+    // 不重新计算。V1.5之前平仓的历史记录没有这个字段，归因统计会如实标注
+    // "仅N笔有归因数据"，不会拿新字段缺失的旧记录去凑数/插值。
+    exitSnapshot: buildExitAttributionSnapshot(p.ticker)
   });
   saveClosedTrades();
 
@@ -7388,6 +8061,26 @@ function setStopLoss(id, val){
 function setTakeProfit(id, val){
   const p = positions.find(p=>p.id===id);
   if(p){ p.takeProfit = val? parseFloat(val): null; p.slOverride = true; saveState(); renderPositions(); }
+}
+// V1.3: 一键采纳④五层止损引擎算出的硬止损（exitState.hardStop，排除利润锁定，
+// 是四层里最严谨、真正反映下行风险的字段——见此前对④引擎的P0修复）。永远只
+// 会把止损价往上调（更保护），从不下调，也从不在用户没点按钮的情况下自动
+// 生效——这是"钻石级独立计算参数"这套简单%计算和"跟踪止损"这套独立ATR实现
+// 之外，第三套止损来源，现在只做"建议+一键采纳"，不做静默覆盖，尊重
+// slOverride代表的"用户已经明确自定义过"这个信号。
+function adoptEngineHardStop(positionId){
+  const p = positions.find(p=>p.id===positionId);
+  if(!p) return;
+  const liveStop = resolveLiveStopSelection(stopEngineCache[p.ticker]);
+  const hardStopValue = (liveStop && !liveStop.insufficient) ? (liveStop.exitState?.hardStop?.value ?? null) : null;
+  if(hardStopValue==null){ showToast('止损引擎尚未算出该票的有效硬止损，请先在"风险指标"页签计算'); return; }
+  if(p.stopLoss!=null && hardStopValue<=p.stopLoss){ showToast('止损引擎算出的硬止损并不高于当前止损价，无需采纳'); return; }
+  const old = p.stopLoss;
+  p.stopLoss = parseFloat(hardStopValue.toFixed(2));
+  p.slOverride = true;
+  setInitialRiskIfNeeded(p); // 仅在从未设置过R基准时才会生效，已有initialRisk的持仓不受影响
+  saveState(); renderPositions();
+  showToast(`${p.ticker} 止损价已从${old!=null?fmt$(old):'（未设置）'}采纳上移至五层止损引擎硬止损 ${fmt$(p.stopLoss)}`);
 }
 
 /* ============== QUOTES (Alpaca优先，DS_MAX统一引擎兜底) ============== */
@@ -7580,15 +8273,61 @@ function tpTargetPrice(p, stage){
   if(!cfg || !cfg.enabled || p.initialRisk==null) return null;
   return p.cost + cfg.targetR * p.initialRisk;
 }
+// V1.3: 统一止盈口径。以前 p.takeProfit（固定%止盈，驱动主表格"止盈价"列 +
+// 价格推送/Discord提醒 + CSV导出）和 exitPlan.tp1/tp2（R倍数分批止盈计划）是
+// 两套完全独立、互不知晓的系统，会同时算出三个不同的"止盈价"（参见持仓页对话
+// 记录）。现在TP1/TP2/Runner的分批计划成为权威口径：只要TP1或TP2还有未执行且
+// 启用的目标，就以它为准；两者都执行完或都被手动禁用后，才退回到剩余仓位在
+// Runner阶段（无固定目标，跟随ATR跟踪止损）或旧的p.takeProfit（仅当TP1/TP2都
+// 被手动关闭时，作为兼容后备）。
+function getEffectiveTpTarget(p){
+  const ep = p.exitPlan || {};
+  const tp1 = ep.tp1, tp2 = ep.tp2;
+  if(tp1 && tp1.enabled && !tp1.executed){
+    const price = tpTargetPrice(p, 'tp1');
+    if(price!=null) return { type:'tp1', price, label:'TP1目标(2R分批止盈)' };
+  }
+  if(tp2 && tp2.enabled && !tp2.executed){
+    const price = tpTargetPrice(p, 'tp2');
+    if(price!=null) return { type:'tp2', price, label:'TP2目标(3R分批止盈)' };
+  }
+  const tp1Done = !tp1 || !tp1.enabled || tp1.executed;
+  const tp2Done = !tp2 || !tp2.enabled || tp2.executed;
+  const tp1WasActive = tp1 && tp1.enabled; // 曾经启用过（哪怕现在已执行）
+  const tp2WasActive = tp2 && tp2.enabled;
+  if(tp1Done && tp2Done && (tp1WasActive || tp2WasActive)){
+    // TP1/TP2计划本身是启用状态、只是都已执行完 —— 剩余仓位交给Runner跟踪止损，
+    // 没有固定的止盈价可显示。
+    return { type:'runner', price:null, label:'Runner跟踪(无固定止盈价，跟随ATR止损)' };
+  }
+  // TP1和TP2都被手动禁用（用户主动关闭了分批止盈计划）—— 退回旧的固定止盈价，
+  // 保持向后兼容，不强迫所有人都用R倍数计划。
+  if(p.takeProfit!=null) return { type:'legacy', price:p.takeProfit, label:'固定止盈价(TP1/TP2已禁用，使用旧版设置)' };
+  return { type:null, price:null, label:null };
+}
 function renderExitPlanPanel(p){
   const q = quoteCache[p.ticker];
   const price = q ? q.price : null;
   const ep = p.exitPlan || {};
+  // fix1修复：R倍数based止盈目标(cost + targetR×initialRisk)在持仓深度亏损时，
+  // 会算出一个离现价极远、短期内没有现实意义的价格（例如现价较基准风险位已经
+  // 跌了大半，2R/3R目标就会高到几倍于现价）。以前只显示一个孤立的美元数字，
+  // 容易被误读成"近期止盈计划"。现在给每个目标价都标注距现价的涨幅百分比，
+  // 并在目标价明显不现实(距现价≥50%)或持仓已深度亏损时，在面板顶部提示"当前
+  // 阶段止盈参考意义有限，优先复核止损"，而不是隐藏或删除这两个目标（用户可能
+  // 仍想保留原始计划作为记录）。
+  const rMultiple = (p.initialRisk!=null && p.initialRisk>0 && price!=null) ? (price-p.cost)/p.initialRisk : null;
+  const tp1Target = tpTargetPrice(p, 'tp1');
+  const tp1DistPct = (tp1Target!=null && price!=null && price>0) ? (tp1Target-price)/price*100 : null;
+  const deepLoss = rMultiple!=null && rMultiple<=-0.5;
+  const unrealisticTp = tp1DistPct!=null && tp1DistPct>=50;
+  const stopCushionPct = (p.stopLoss!=null && price!=null && price>p.stopLoss) ? (price-p.stopLoss)/price*100 : null;
   const rows = ['tp1','tp2'].map(stage=>{
     const cfg = ep[stage];
     if(!cfg) return '';
     const target = tpTargetPrice(p, stage);
     const reached = target!=null && price!=null && price>=target;
+    const distPct = (target!=null && price!=null && price>0) ? (target-price)/price*100 : null;
     // BUGFIX (P1-2): qtyPct is a percentage of the lot's ORIGINAL size
     // (p.originalQty), not of whatever remains in p.qty right now — otherwise
     // TP2's 25% is computed against the 75% left after TP1 already sold its
@@ -7599,8 +8338,8 @@ function renderExitPlanPanel(p){
       <div class="dim" style="margin-bottom:8px;">
         <div class="dim-head">
           <span>${stage==='tp1'?'① TP1':'② TP2'} · 目标${cfg.targetR}R · 卖出${cfg.qtyPct}%</span>
-          <b style="color:${cfg.executed?'var(--muted)':(reached?'var(--green)':'var(--text)')};">
-            ${target!=null?fmt$(target):'—'}${reached&&!cfg.executed?' ✅已到价':''}
+          <b style="color:${cfg.executed?'var(--muted)':(reached?'var(--green)':(distPct!=null&&distPct>=50?'var(--amber)':'var(--text)'))};">
+            ${target!=null?fmt$(target):'—'}${reached&&!cfg.executed?' ✅已到价':''}${!cfg.executed&&distPct!=null?` <span class="hint" style="font-weight:400;">(距现价${distPct>=0?'+':''}${distPct.toFixed(0)}%)</span>`:''}
           </b>
         </div>
         <div class="metrics-line">
@@ -7613,6 +8352,14 @@ function renderExitPlanPanel(p){
       </div>`;
   }).join('');
   const tp1Done = ep.tp1?.executed, tp2Done = ep.tp2?.executed;
+  const showFarWarning = !tp1Done && (deepLoss || unrealisticTp);
+  const farWarningHtml = showFarWarning ? `
+      <div class="dim" style="grid-column:1/-1;border-color:var(--amber);margin-bottom:8px;">
+        <div class="dim-head"><span>⚠ 止盈计划当前参考意义有限</span></div>
+        <div class="metrics-line">
+          ${rMultiple!=null?`当前浮亏R=${rMultiple.toFixed(2)}`:'R倍数未知'}${stopCushionPct!=null?`，现价距止损价仅剩${stopCushionPct.toFixed(1)}%空间`:''}${tp1DistPct!=null?`，TP1目标价距现价还需上涨${tp1DistPct.toFixed(0)}%`:''}——按建仓时锁定的基准风险计算出的止盈目标已严重偏离现实价格。这不代表计算有误（公式仍是 成本+targetR×基准风险），但当前阶段更应该优先复核止损价该不该执行，而不是等待这两个止盈目标。
+        </div>
+      </div>` : '';
   // P1-3: Runner note now reflects the actual state machine (activated /
   // remainingQty / exited) instead of only restating the static plan.
   let runnerNote = '';
@@ -7628,15 +8375,16 @@ function renderExitPlanPanel(p){
       runnerNote = `尚未启动：按计划占原始仓位${r.qtyPct}%，TP1/TP2均执行（或未启用）后自动启动`;
     }
   }
-  return `<tr class="detail-row"><td colspan="14">
+  return `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:8px;">
     <div class="dim-grid">
+      ${farWarningHtml}
       ${rows}
       <div class="dim" style="grid-column:1/-1;">
         <div class="dim-head"><span>③ Runner 剩余仓位</span></div>
         <div class="metrics-line">${runnerNote}</div>
       </div>
     </div>
-  </td></tr>`;
+  </div>`;
 }
 // 执行TP：复用现有的closePosition部分平仓流程，只是预填数量+价格，并标记
 // 这次平仓对应哪个TP阶段，供confirmClosePosition()写入执行状态和历史记录。
@@ -7698,6 +8446,23 @@ function sortBy(col){
   if(activeSort.col===col) activeSort.dir = activeSort.dir==='asc'?'desc':'asc';
   else{ activeSort.col=col; activeSort.dir='asc'; }
   renderPositions();
+}
+// V1.4: card layout has no clickable column headers, so sorting is driven by a
+// <select> + direction button instead. Both still just mutate the same
+// activeSort object sortBy()/getSortedFilteredGroups() already use.
+function setSortCol(col){
+  activeSort.col = col; activeSort.dir = 'asc';
+  renderPositions();
+}
+function toggleSortDir(){
+  activeSort.dir = activeSort.dir==='asc' ? 'desc' : 'asc';
+  renderPositions();
+}
+function syncSortUI(){
+  const sel = document.getElementById('sortColSelect');
+  if(sel) sel.value = activeSort.col;
+  const btn = document.getElementById('sortDirBtn');
+  if(btn) btn.textContent = activeSort.dir==='asc' ? '▲ 升序' : '▼ 降序';
 }
 
 function clearFilter(){
@@ -7868,20 +8633,25 @@ function getSortedFilteredGroups(){
 
 function renderPositions(){
   renderTagFilterBar();
-  updateSortArrows();
+  syncSortUI();
 
-  const body = document.getElementById('positionsBody');
+  const body = document.getElementById('positionsCards');
   const empty = document.getElementById('emptyState');
   if(positions.length===0){
     body.innerHTML=''; empty.style.display='block';
-    document.getElementById('positionsTable').style.display='none';
+    body.style.display='none';
     renderSummary(); renderPositionIntelSummary(); return;
   }
   empty.style.display='none';
-  document.getElementById('positionsTable').style.display='table';
+  body.style.display='grid';
 
   const { tickerMeta, totalValue } = getSortedFilteredGroups();
   const triggeredAlerts = [];
+  // V1.4: computeAIDecision()（Today's Action）内部要用到 computePortfolioHealth()，
+  // 后者本身是O(持仓数)的组合级计算——如果卡片循环里对每只票都各调一次
+  // computeAIDecision()、每次都在内部重新跑一遍，会变成O(n²)。这里在循环外
+  // 算一次、传进去复用，不影响其他调用方（他们不传第二参数，行为不变）。
+  const portfolioHealthForRender = computePortfolioHealth();
   let html = '';
 
   tickerMeta.forEach(({ ticker, lots, price, totalQty, totalCost, mv, pl, plPct, weight, holdDays, oldestBuyDate, rMultiple, statusInfo })=>{
@@ -7955,102 +8725,146 @@ function renderPositions(){
     lots.forEach(p=>{
       const pPrice = quoteCache[p.ticker]?.price ?? null;
       const stopHit = p.stopLoss && pPrice!==null && pPrice<=p.stopLoss;
-      const profitHit = p.takeProfit && pPrice!==null && pPrice>=p.takeProfit;
       if(stopHit) triggeredAlerts.push({id:p.id, ticker:p.ticker, type:'stop', price:pPrice, target:p.stopLoss});
-      if(profitHit) triggeredAlerts.push({id:p.id, ticker:p.ticker, type:'profit', price:pPrice, target:p.takeProfit});
+      // V1.3: 止盈提醒改用统一口径（见getEffectiveTpTarget）——TP1/TP2分批计划
+      // 存在且未执行完时，提醒按那个目标价触发（type:'tp1'/'tp2'，processAlerts
+      // 里会带上"计划卖出X%"的具体动作说明）；只有TP1/TP2都被手动关掉时才退回
+      // type:'legacy'，用旧的固定止盈价触发。Runner阶段没有固定目标价，不产生
+      // 止盈提醒（它跟随止损引擎的ATR跟踪止损，由止损提醒/止损引擎面板覆盖）。
+      const eff = getEffectiveTpTarget(p);
+      if(eff.price!=null && pPrice!==null && pPrice>=eff.price){
+        triggeredAlerts.push({id:p.id, ticker:p.ticker, type:eff.type, price:pPrice, target:eff.price});
+      }
     });
     const groupStopHit = lots.some(p=>p.stopLoss && (quoteCache[p.ticker]?.price??null)!==null && (quoteCache[p.ticker]?.price)<=p.stopLoss);
-    const groupProfitHit = lots.some(p=>p.takeProfit && (quoteCache[p.ticker]?.price??null)!==null && (quoteCache[p.ticker]?.price)>=p.takeProfit);
+    const groupProfitHit = lots.some(p=>{
+      const eff = getEffectiveTpTarget(p);
+      const pr = quoteCache[p.ticker]?.price ?? null;
+      return eff.price!=null && pr!==null && pr>=eff.price;
+    });
+
+    // V1.4: 卡片布局新增三项——健康分(纯新计算)/今日行动(复用既有的computeAIDecision，
+    // 不是新的并行决策系统)/五层止损常驻traffic-light(复用stopEngineCache，不重算)。
+    const healthInfo = computePositionHealth(ticker, lots, price);
+    const aiDecision = computeAIDecision(ticker, portfolioHealthForRender);
+
+    const holdDaysHtml = (()=>{
+      if(holdDays===null) return '<span class="neu">未知</span>';
+      const daysToLT = 366 - holdDays;
+      const isLT = holdDays >= 366;
+      if(isLT) return `<span style="color:var(--green);">🟢 长期(${holdDays}天)</span>`;
+      if(daysToLT <= 30) return `<span style="color:var(--amber);">🟡 ${daysToLT}天转长期</span>`;
+      return `<span style="color:var(--muted);">短期 · ${holdDays}天</span>`;
+    })();
+
+    const stopDisplay = (()=>{
+      // Always reflect the lots' actual stopLoss values — these already stay in
+      // sync with the ticker-level default via setTickerDefault() for any lot
+      // that hasn't been individually overridden, and correctly diverge for lots
+      // that have (slOverride=true).
+      const lotStops = lots.map(p=>p.stopLoss).filter(v=>v!=null);
+      const display = lotStops.length ? (lotStops.length===1?fmt$(lotStops[0]):lotStops.map(v=>fmt$(v)).join(' / ')) : null;
+      return display ? display : '—';
+    })();
+    const tpDisplay = (()=>{
+      // V1.3统一口径（getEffectiveTpTarget）——优先显示TP1/TP2分批止盈计划里下一个
+      // 未执行的目标价，都执行完则显示"Runner跟踪中"，只有用户手动关掉TP1/TP2时
+      // 才退回旧的固定止盈价。
+      const effs = lots.map(p=>getEffectiveTpTarget(p));
+      const priced = effs.filter(e=>e.price!=null);
+      if(priced.length){
+        const display = priced.length===1 ? fmt$(priced[0].price) : priced.map(e=>fmt$(e.price)).join(' / ');
+        const tagMap = { tp1:'TP1', tp2:'TP2', legacy:'固定' };
+        const tags = [...new Set(priced.map(e=>tagMap[e.type]).filter(Boolean))];
+        return { text: display, tag: tags.join('/'), title: priced.map(e=>e.label).join('; ') };
+      }
+      if(effs.some(e=>e.type==='runner')) return { text:'Runner跟踪中', tag:'', title:'TP1/TP2均已执行，剩余仓位跟随ATR跟踪止损，无固定止盈价' };
+      return { text:'—', tag:'', title:'' };
+    })();
 
     html += `
-      <tr class="group-row ${lossAlertHit?'loss-alert-row':''}">
-        <td class="sticky-col" onclick="toggleGroup('${ticker}')" style="cursor:pointer;">
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <span style="display:inline-block;width:14px;transform:rotate(${isExpanded?90:0}deg);">▸</span>
+      <div class="position-card ${lossAlertHit?'loss-alert-card':''}">
+        <div class="pc-top" onclick="toggleGroup('${ticker}')">
+          <div class="pc-title-row">
+            <span class="pc-expand-arrow" style="transform:rotate(${isExpanded?90:0}deg);">▸</span>
             <span class="ticker">${ticker}</span>
             ${lots.length>1?`<span class="ticker-note">${lots.length}笔</span>`:''}
+            <span class="pc-price">${price!==null?fmt$(displayPrice):'<span class="neu">未刷新</span>'}</span>
+          </div>
+          <div class="pc-badges-row">
+            ${statusBadgeHtml(statusInfo)}
+            ${todayActionBadgeHtml(aiDecision)}
+            ${healthBadgeHtml(healthInfo)}
+            ${intentBadge}
+          </div>
+          <div class="pc-tags-row">
             ${tagSet.map(t=>`<span class="lot-tag">${escapeHtml(t)}</span>`).join('')}
             ${noteSet.length&&!tagSet.length?`<span class="ticker-note">${escapeHtml(noteSet.join(', '))}</span>`:''}
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">
-            ${intentBadge}
             ${autoSignals.join('')}
           </div>
-        </td>
-        <td onclick="toggleGroup('${ticker}')">${totalQty}</td>
-        <td onclick="toggleGroup('${ticker}')">${fmt$(avgCost)}</td>
-        <td onclick="toggleGroup('${ticker}')">${price!==null?fmt$(displayPrice):'<span class="neu">未刷新</span>'}</td>
-        <td onclick="toggleGroup('${ticker}')">${fmt$(mv)}</td>
-        <td onclick="toggleGroup('${ticker}')" class="${pclass(pl)}">${fmt$(pl)}</td>
-        <td onclick="toggleGroup('${ticker}')">
-          <span class="${pclass(plPct)}">${fmtPct(plPct)}</span>
-        </td>
-        <td onclick="toggleGroup('${ticker}')">
-          <span>${weight.toFixed(1)}%</span>
-        </td>
-        <td onclick="toggleGroup('${ticker}')">
-          ${(()=>{
-            if(holdDays===null) return '<span class="neu">—</span>';
-            const daysToLT = 366 - holdDays; // long-term threshold in US (>1 year = 366 days incl. leap safety)
-            const isLT = holdDays >= 366;
-            if(isLT){
-              return `<span style="color:var(--green);font-size:12px;">🟢 长期</span><div class="ticker-note">${holdDays}天</div>`;
-            } else if(daysToLT <= 30){
-              return `<span style="color:var(--amber);font-size:12px;">🟡 ${daysToLT}天转长期</span><div class="ticker-note">${holdDays}天 (短期)</div>`;
-            } else {
-              return `<span style="color:var(--muted);font-size:12px;">短期</span><div class="ticker-note">${holdDays}天</div>`;
-            }
-          })()}
-        </td>
-        <td onclick="toggleGroup('${ticker}')">
-          <span class="r-value" style="color:${rMultipleColor(rMultiple)};">${fmtR(rMultiple)}</span>
-          ${rMultiple==null?'<div class="r-sub">未设止损基准</div>':''}
-        </td>
-        <td onclick="toggleGroup('${ticker}')">
-          ${statusBadgeHtml(statusInfo)}
-        </td>
-        <td>${(()=>{
-          // Always reflect the lots' actual stopLoss values — these already stay in
-          // sync with the ticker-level default via setTickerDefault() for any lot
-          // that hasn't been individually overridden, and correctly diverge for lots
-          // that have (slOverride=true). Showing tickerDefault directly here regardless
-          // of override state would contradict what the batch-level input actually holds.
-          const lotStops = lots.map(p=>p.stopLoss).filter(v=>v!=null);
-          const display = lotStops.length ? (lotStops.length===1?fmt$(lotStops[0]):lotStops.map(v=>fmt$(v)).join(' / ')) : null;
-          return display ? `<span style="font-family:var(--mono);font-size:12px;">${display}</span>` : '<span class="neu">—</span>';
-        })()}
-          ${groupStopHit?'<div class="badge-alert" style="background:rgba(239,68,68,0.15);color:var(--red);">⚠ 止损</div>':''}
-        </td>
-        <td>${(()=>{
-          const lotProfits = lots.map(p=>p.takeProfit).filter(v=>v!=null);
-          const display = lotProfits.length ? (lotProfits.length===1?fmt$(lotProfits[0]):lotProfits.map(v=>fmt$(v)).join(' / ')) : null;
-          return display ? `<span style="font-family:var(--mono);font-size:12px;">${display}</span>` : '<span class="neu">—</span>';
-        })()}
-          ${groupProfitHit?'<div class="badge-alert" style="background:rgba(34,197,94,0.15);color:var(--green);">🎯 止盈</div>':''}
-        </td>
-        <td class="row-actions">
+        </div>
+
+        <div class="pc-metrics-row" onclick="toggleGroup('${ticker}')">
+          <div class="pc-metric-primary">
+            <div class="pc-metric-label">R倍数 R-Multiple</div>
+            <span class="r-value" style="color:${rMultipleColor(rMultiple)};">${fmtR(rMultiple)}</span>
+            ${rMultiple==null?'<div class="r-sub">未设止损基准</div>':''}
+          </div>
+          <div>
+            <div class="pc-metric-label">盈亏 P/L</div>
+            <div class="pc-metric-value ${pclass(pl)}">${fmt$(pl)}</div>
+            <div class="r-sub ${pclass(plPct)}">${fmtPct(plPct)}</div>
+          </div>
+          <div>
+            <div class="pc-metric-label">市值 · 权重</div>
+            <div class="pc-metric-value">${fmt$(mv)}</div>
+            <div class="r-sub">${weight.toFixed(1)}% · ${holdDaysHtml}</div>
+          </div>
+        </div>
+
+        ${stopLadderHtml(ticker, price)}
+
+        <div class="pc-tp-line">
+          <span class="neu" style="font-family:var(--sans);">止损</span>
+          <span style="font-family:var(--mono);">${stopDisplay}</span>
+          ${groupStopHit?'<span class="badge-alert" style="background:rgba(239,68,68,0.15);color:var(--red);">⚠ 止损</span>':''}
+          <span class="neu" style="font-family:var(--sans);margin-left:8px;">止盈</span>
+          <span style="font-family:var(--mono);" title="${escapeHtml(tpDisplay.title)}">${tpDisplay.text}</span>
+          ${tpDisplay.tag?`<span class="ticker-note">${tpDisplay.tag}</span>`:''}
+          ${groupProfitHit?'<span class="badge-alert" style="background:rgba(34,197,94,0.15);color:var(--green);">🎯 止盈</span>':''}
+        </div>
+
+        <div class="pc-actions-row">
           <button class="icon-btn" onclick="event.stopPropagation(); scanSingleTicker('${ticker}')" style="color:var(--amber);" title="单股扫描：只对该股重新计算风险指标">⚡</button>
           <button class="icon-btn" onclick="event.stopPropagation(); openJournal('${ticker}')" style="color:${tradeJournal[ticker]?'var(--accent2)':'var(--muted)'};" title="交易日志">📓</button>
-          <button class="icon-btn" onclick="event.stopPropagation(); openTickerDefaultModal('${ticker}')" style="color:var(--accent2);">⚙</button>
-        </td>
-      </tr>
-    `;
+          <button class="icon-btn" onclick="event.stopPropagation(); openTickerDefaultModal('${ticker}')" style="color:var(--accent2);" title="批次默认设置">⚙</button>
+        </div>
 
-    if(isExpanded){
-      lots.sort((a,b)=>(a.buyDate||'').localeCompare(b.buyDate||'')).forEach(p=>{
-        const pPrice = quoteCache[p.ticker]?.price ?? null;
-        const lotValue=(pPrice??p.cost)*p.qty, lotCost=p.cost*p.qty;
-        const lotPl=lotValue-lotCost, lotPlPct=lotCost>0?(lotPl/lotCost*100):0;
-        const stopHit=p.stopLoss&&pPrice!==null&&pPrice<=p.stopLoss;
-        const profitHit=p.takeProfit&&pPrice!==null&&pPrice>=p.takeProfit;
-        const lotHoldDays = holdDaysOf(p.buyDate);
-        const lotR = calcLotRMultiple(p, pPrice);
-        html += `
-          <tr class="lot-row">
-            <td style="padding-left:40px;">
-              <span class="lang-en">${p.buyDate||'—'}</span>
-              ${(p.tags||[]).map(t=>`<span class="lot-tag">${escapeHtml(t)}</span>`).join('')}
-              <div style="margin-top:3px;">
+        ${!isExpanded ? '' : `
+        <div class="pc-detail">
+          <div class="pc-meta-line">
+            <span>持仓 ${totalQty}股</span><span>均价 ${fmt$(avgCost)}</span><span>成本合计 ${fmt$(totalCost)}</span>
+          </div>
+          ${lots.slice().sort((a,b)=>(a.buyDate||'').localeCompare(b.buyDate||'')).map(p=>{
+            const pPrice = quoteCache[p.ticker]?.price ?? null;
+            const lotValue=(pPrice??p.cost)*p.qty, lotCost=p.cost*p.qty;
+            const lotPl=lotValue-lotCost, lotPlPct=lotCost>0?(lotPl/lotCost*100):0;
+            const stopHit=p.stopLoss&&pPrice!==null&&pPrice<=p.stopLoss;
+            const profitHit=p.takeProfit&&pPrice!==null&&pPrice>=p.takeProfit;
+            const lotHoldDays = holdDaysOf(p.buyDate);
+            const lotR = calcLotRMultiple(p, pPrice);
+            // V1.3: 若④五层止损引擎已经算出比当前止损价更高（更保护）的硬止损，
+            // 显示"建议+一键采纳"入口，不静默生效（见adoptEngineHardStop）。
+            const engineLiveStop = resolveLiveStopSelection(stopEngineCache[p.ticker]);
+            const engineHardStop = (engineLiveStop && !engineLiveStop.insufficient) ? (engineLiveStop.exitState?.hardStop?.value ?? null) : null;
+            const engineAdvisory = (engineHardStop!=null && (p.stopLoss==null || engineHardStop>p.stopLoss)) ? engineHardStop : null;
+            let lotHtml = `
+            <div class="pc-lot">
+              <div class="pc-lot-top">
+                <div>
+                  <span class="lang-en">${p.buyDate||'—'}</span>
+                  ${(p.tags||[]).map(t=>`<span class="lot-tag">${escapeHtml(t)}</span>`).join('')}
+                </div>
                 <input
                   class="note-inline"
                   value="${escapeHtml(p.note||'')}"
@@ -8061,49 +8875,54 @@ function renderPositions(){
                   title="点击编辑备注"
                 >
               </div>
-            </td>
-            <td>${p.qty}</td><td>${fmt$(p.cost)}</td>
-            <td>${pPrice!==null?fmt$(pPrice):'<span class="neu">—</span>'}</td>
-            <td>${fmt$(lotValue)}</td>
-            <td class="${pclass(lotPl)}">${fmt$(lotPl)}</td>
-            <td class="${pclass(lotPlPct)}">${fmtPct(lotPlPct)}</td>
-            <td>—</td>
-            <td>${holdDaysCellHtml(lotHoldDays)}</td>
-            <td>
-              <span class="r-value" style="color:${rMultipleColor(lotR)};font-size:12px;">${fmtR(lotR)}</span>
-              ${p.initialRisk!=null?`<div class="r-sub">基准风险 ${fmt$(p.initialRisk)}/股 <span class="icon-btn" style="display:inline;padding:0 2px;cursor:pointer;" onclick="event.stopPropagation();resetInitialRisk('${p.id}')" title="用当前止损价重置R倍数基准">↺</span></div>`:''}
-            </td>
-            <td>—</td>
-            <td>
-              <input type="number" step="0.01" value="${p.stopLoss??''}" placeholder="—"
-                class="lot-stop-input" style="${stopHit?'border-color:var(--red);':''}"
-                onclick="event.stopPropagation()" onchange="setStopLoss('${p.id}',this.value)">
-              <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:var(--muted);cursor:pointer;" onclick="event.stopPropagation()">
-                <input type="checkbox" ${p.trailingEnabled?'checked':''} onchange="toggleTrailing('${p.id}',this.checked)" style="width:auto;">
-                跟踪止损${p.trailingEnabled&&p.highWaterMark?` (峰值${fmt$(p.highWaterMark)})`:''}
-              </label>
-              <div class="ticker-note">${p.slOverride?'🔧 已自定义':'↳ 跟随默认'}</div>
-            </td>
-            <td>
-              <input type="number" step="0.01" value="${p.takeProfit??''}" placeholder="—"
-                class="lot-stop-input" style="${profitHit?'border-color:var(--green);':''}"
-                onclick="event.stopPropagation()" onchange="setTakeProfit('${p.id}',this.value)">
-            </td>
-            <td class="row-actions">
-              <button class="icon-btn" onclick="event.stopPropagation();autoCalcSLTP('${p.id}')" style="color:var(--accent);" title="自动计算止损止盈">🎯</button>
-              <button class="icon-btn" onclick="event.stopPropagation();setBreakEvenStop('${p.id}')" style="color:${pPrice!==null&&pPrice>p.cost?'var(--accent2)':'var(--muted)'};" title="设为保本止损（成本价）">🔒</button>
-              <button class="icon-btn" onclick="event.stopPropagation();toggleLotParams('${p.id}')" style="color:${p.calcParams?'var(--accent2)':'var(--muted)'};">⏷</button>
-              <button class="icon-btn" onclick="event.stopPropagation();toggleExitPlanPanel('${p.id}')" style="color:${expandedExitPlan.has(p.id)?'var(--accent)':'var(--muted)'};" title="分批止盈计划 TP1/TP2/Runner">🎯📤</button>
-              ${p.slOverride?`<button class="icon-btn" onclick="event.stopPropagation();resetLotToDefault('${p.id}')" style="color:var(--accent2);">↺</button>`:''}
-              <button class="icon-btn" onclick="event.stopPropagation();openTagEditor('${p.id}')" style="color:var(--accent2);" title="编辑标签">🏷</button>
-              <button class="icon-btn" onclick="event.stopPropagation();removePosition('${p.id}')" title="删除">✕</button>
-            </td>
-          </tr>
-        `;
-        if(expandedLotParams.has(p.id)) html += renderLotParamsPanel(p);
-        if(expandedExitPlan.has(p.id)) html += renderExitPlanPanel(p);
-      });
-    }
+              <div class="pc-lot-grid">
+                <div class="pc-lot-field"><label>数量</label>${p.qty}</div>
+                <div class="pc-lot-field"><label>成本价</label>${fmt$(p.cost)}</div>
+                <div class="pc-lot-field"><label>现价</label>${pPrice!==null?fmt$(pPrice):'<span class="neu">—</span>'}</div>
+                <div class="pc-lot-field"><label>市值</label>${fmt$(lotValue)}</div>
+                <div class="pc-lot-field"><label>盈亏</label><span class="${pclass(lotPl)}">${fmt$(lotPl)}</span></div>
+                <div class="pc-lot-field"><label>盈亏%</label><span class="${pclass(lotPlPct)}">${fmtPct(lotPlPct)}</span></div>
+                <div class="pc-lot-field"><label>持有期</label>${holdDaysCellHtml(lotHoldDays)}</div>
+                <div class="pc-lot-field"><label>R倍数</label>
+                  <span class="r-value" style="color:${rMultipleColor(lotR)};font-size:12px;">${fmtR(lotR)}</span>
+                  ${p.initialRisk!=null?`<div class="r-sub">基准${fmt$(p.initialRisk)}/股 <span class="icon-btn" style="display:inline;padding:0 2px;cursor:pointer;" onclick="event.stopPropagation();resetInitialRisk('${p.id}')" title="用当前止损价重置R倍数基准">↺</span></div>`:''}
+                </div>
+                <div class="pc-lot-field" style="min-width:130px;"><label>止损价</label>
+                  <input type="number" step="0.01" value="${p.stopLoss??''}" placeholder="—"
+                    class="lot-stop-input" style="${stopHit?'border-color:var(--red);':''}"
+                    onclick="event.stopPropagation()" onchange="setStopLoss('${p.id}',this.value)">
+                  <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:var(--muted);cursor:pointer;" onclick="event.stopPropagation()">
+                    <input type="checkbox" ${p.trailingEnabled?'checked':''} onchange="toggleTrailing('${p.id}',this.checked)" style="width:auto;">
+                    跟踪止损${p.trailingEnabled&&p.highWaterMark?` (峰值${fmt$(p.highWaterMark)})`:''}
+                  </label>
+                  <div class="ticker-note">${p.slOverride?'🔧 已自定义':'↳ 跟随默认'}</div>
+                  ${engineAdvisory!=null?`<div class="ticker-note" style="color:var(--amber);margin-top:4px;">↑ 引擎硬止损${fmt$(engineAdvisory)}更高 <span style="text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();adoptEngineHardStop('${p.id}')">一键采纳</span></div>`:''}
+                </div>
+                <div class="pc-lot-field" style="min-width:130px;"><label>止盈价</label>
+                  <input type="number" step="0.01" value="${p.takeProfit??''}" placeholder="—"
+                    class="lot-stop-input" style="${profitHit?'border-color:var(--green);':''}"
+                    onclick="event.stopPropagation()" onchange="setTakeProfit('${p.id}',this.value)">
+                  ${(p.exitPlan?.tp1?.enabled || p.exitPlan?.tp2?.enabled)?`<div class="ticker-note" title="TP1/TP2分批止盈计划已启用，主表格/提醒统一以它为准；这个固定止盈价只在你把TP1和TP2都禁用后才会生效">⚠ 当前以TP1/TP2为准</div>`:'<div class="ticker-note">↳ TP1/TP2已禁用，此为生效止盈价</div>'}
+                </div>
+              </div>
+              <div class="pc-lot-actions">
+                <button class="icon-btn" onclick="event.stopPropagation();autoCalcSLTP('${p.id}')" style="color:var(--accent);" title="自动计算止损止盈">🎯</button>
+                <button class="icon-btn" onclick="event.stopPropagation();setBreakEvenStop('${p.id}')" style="color:${pPrice!==null&&pPrice>p.cost?'var(--accent2)':'var(--muted)'};" title="设为保本止损（成本价）">🔒</button>
+                <button class="icon-btn" onclick="event.stopPropagation();toggleLotParams('${p.id}')" style="color:${p.calcParams?'var(--accent2)':'var(--muted)'};">⏷</button>
+                <button class="icon-btn" onclick="event.stopPropagation();toggleExitPlanPanel('${p.id}')" style="color:${expandedExitPlan.has(p.id)?'var(--accent)':'var(--muted)'};" title="分批止盈计划 TP1/TP2/Runner">🎯📤</button>
+                ${p.slOverride?`<button class="icon-btn" onclick="event.stopPropagation();resetLotToDefault('${p.id}')" style="color:var(--accent2);">↺</button>`:''}
+                <button class="icon-btn" onclick="event.stopPropagation();openTagEditor('${p.id}')" style="color:var(--accent2);" title="编辑标签">🏷</button>
+                <button class="icon-btn" onclick="event.stopPropagation();removePosition('${p.id}')" title="删除">✕</button>
+              </div>
+            </div>`;
+            if(expandedLotParams.has(p.id)) lotHtml += renderLotParamsPanel(p);
+            if(expandedExitPlan.has(p.id)) lotHtml += renderExitPlanPanel(p);
+            return lotHtml;
+          }).join('')}
+        </div>
+        `}
+      </div>
+    `;
   });
 
   body.innerHTML = html;
@@ -8270,8 +9089,7 @@ function renderLotParamsPanel(p){
   const trailMethod = cp.trailMethod ?? settings.trailMethod;
 
   return `
-    <tr style="background:rgba(96,165,250,0.04);">
-      <td colspan="11" style="padding:16px 16px 16px 48px;">
+    <div style="background:rgba(96,165,250,0.04);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <strong style="font-size:12px;color:var(--accent2);">该笔独立计算参数 / Lot-Specific Calculation Params</strong>
           <span class="hint">${usingGlobal? '当前跟随全局设置（尚未自定义）':'已使用该笔独立参数'}</span>
@@ -8331,8 +9149,7 @@ function renderLotParamsPanel(p){
           <button class="primary small" onclick="saveLotParams('${p.id}')">保存该笔独立参数</button>
           ${!usingGlobal? `<button class="ghost small" onclick="clearLotParams('${p.id}')">恢复跟随全局设置</button>`:''}
         </div>
-      </td>
-    </tr>
+    </div>
   `;
 }
 
@@ -9698,10 +10515,21 @@ function processAlerts(triggered){
     // Only play sound/notify/Discord once per day per ticker+type
     if(isFirstToday){
       const isStop = a.type==='stop';
-      const titleZh = isStop ? `⚠ 止损触发: ${a.ticker}` : `🎯 止盈触发: ${a.ticker}`;
+      // V1.3: 止盈提醒统一到TP1/TP2/Runner口径后，a.type 可能是 'tp1'/'tp2'/
+      // 'legacy'（不再只有单一的'profit'）——tpLabel/tpActionNote让提醒明确说
+      // 出"这是哪个阶段、按计划该卖多少"，而不是一个孤立的价格数字。
+      const tpLabels = { tp1:'TP1止盈(2R)', tp2:'TP2止盈(3R)', legacy:'止盈价' };
+      const tpLabel = tpLabels[a.type] || '止盈价';
+      let tpActionNote = '';
+      if(a.type==='tp1' || a.type==='tp2'){
+        const p = positions.find(x=>x.id===a.id);
+        const cfg = p?.exitPlan?.[a.type];
+        if(cfg) tpActionNote = `，按计划卖出${cfg.qtyPct}%`;
+      }
+      const titleZh = isStop ? `⚠ 止损触发: ${a.ticker}` : `🎯 ${tpLabel}触发: ${a.ticker}`;
       const bodyZh = isStop
         ? `现价 ${fmt$(a.price)} 已跌破止损价 ${fmt$(a.target)}`
-        : `现价 ${fmt$(a.price)} 已达到止盈价 ${fmt$(a.target)}`;
+        : `现价 ${fmt$(a.price)} 已达到${tpLabel} ${fmt$(a.target)}${tpActionNote}`;
       if('Notification' in window && Notification.permission==='granted'){
         new Notification(titleZh, { body: bodyZh });
       }
@@ -9718,12 +10546,12 @@ function processAlerts(triggered){
         await sendDiscord({
           title: isStop
             ? `🚨 止损触发 ${a.ticker} — 跌破 ${fmt$(a.target)}`
-            : `✅ 止盈触发 ${a.ticker} — 达到 ${fmt$(a.target)}`,
+            : `✅ ${tpLabel}触发 ${a.ticker} — 达到 ${fmt$(a.target)}${tpActionNote}`,
           color: isStop ? 0xef4444 : 0x22c55e,
-          description: isStop ? `现价已跌破止损线，建议检视是否执行止损` : `现价已到达止盈目标，可考虑获利了结`,
+          description: isStop ? `现价已跌破止损线，建议检视是否执行止损` : `现价已到达${tpLabel}目标${tpActionNote}`,
           fields:[
             { name:'📍 现价',    value:`**${fmt$(a.price)}**`, inline:true },
-            { name:isStop?'🛑 止损价':'🎯 止盈价', value:`${fmt$(a.target)}`, inline:true },
+            { name:isStop?'🛑 止损价':`🎯 ${tpLabel}`, value:`${fmt$(a.target)}`, inline:true },
             { name:'⏰ 市场阶段',value:getMarketPhase(), inline:true },
             { name:'📦 持仓',    value:`${totalQty}股`, inline:true },
             { name:'💰 市值',    value:`${fmt$(mv)}`, inline:true },
@@ -9790,7 +10618,9 @@ function renderAlertLog(){
         ${sorted.map(a=>{
           const isStop = a.type==='stop';
           const color = isStop ? 'var(--red)' : 'var(--green)';
-          const label = isStop ? '⚠ 止损触发' : '🎯 止盈触发';
+          // V1.3: type现在可能是tp1/tp2/legacy，标签带上具体阶段而不是笼统"止盈触发"
+          const tpLabels = { tp1:'🎯 TP1触发', tp2:'🎯 TP2触发', legacy:'🎯 止盈触发' };
+          const label = isStop ? '⚠ 止损触发' : (tpLabels[a.type] || '🎯 止盈触发');
           return `
             <tr>
               <td style="color:${color};font-weight:600;font-family:var(--sans);">${label}</td>
@@ -9853,6 +10683,12 @@ function renderPeriodPL(){
 
   // For "Today": compare effectiveCurrent vs the snapshot just before today's
   const prevSnap = snapStrictBefore(todayStr_);
+
+  // BUGFIX (found during V1.5 verification): `today` was referenced below without
+  // ever being declared in this function's scope — a latent ReferenceError that
+  // only fires once navSnapshots is non-empty and currentValue>0 (the early-return
+  // above meant this path was rarely exercised in prior manual testing).
+  const today = new Date();
 
   // Week start: last Monday
   const weekStart = new Date(today);
@@ -9979,6 +10815,8 @@ function renderAnalytics(){
   renderTWR();
   renderAnalyticsSummary();
   renderWinRateStats();
+  renderRollingStats();
+  renderTradeAttribution();
   renderMonthlyCalendar();
   renderNavVsBenchChart();
   renderContributionChart();
@@ -10495,7 +11333,10 @@ function exportPositionsCsv(){
     const plPct = totalCost>0?(pl/totalCost*100):0;
     const weight = totalValue>0?(mv/totalValue*100):0;
     const stopLoss = lots.find(p=>p.stopLoss)?.stopLoss??'';
-    const takeProfit = lots.find(p=>p.takeProfit)?.takeProfit??'';
+    // V1.3: CSV导出的"止盈价"改用统一口径，与主表格/提醒保持一致，而不是导出
+    // 一个跟界面上TP1/TP2分批止盈计划对不上的旧字段。
+    const effTp = lots.map(p=>getEffectiveTpTarget(p)).find(e=>e.price!=null);
+    const takeProfit = effTp ? effTp.price : (lots.some(p=>getEffectiveTpTarget(p).type==='runner') ? 'Runner跟踪中' : '');
     const notes = [...new Set(lots.map(p=>p.note).filter(Boolean))].join(';');
     const dates = [...new Set(lots.map(p=>p.buyDate).filter(Boolean))].join(';');
     const oldestBuyDate = [...new Set(lots.map(p=>p.buyDate).filter(Boolean))].sort()[0] || null;
@@ -10667,6 +11508,69 @@ function renderWinRateStats(){
         <div style="font-weight:700;font-family:var(--mono);color:var(--red);">${worst.ticker} ${fmt$(worst.realizedPL)}</div>
         <div class="stat-sub">${worst.buyDate||'?'} → ${worst.sellDate||'?'}</div>
       </div>
+    </div>
+  `;
+}
+
+/* ============== ROLLING STATS (V1.5) ==============
+   跟上面"策略绩效统计"(全历史口径)不同，这里用滚动窗口——最近N笔交易的胜率、
+   最近N天的组合收益率——能看出"最近状态是在变好还是变差"，全历史口径看不出这个趋势。
+   复用closedTrades(按平仓时间倒序，[0]是最新一笔)和navSnapshots，不新增数据源。 */
+function computeRollingWinRate(windowSizes){
+  return windowSizes.map(n=>{
+    const recent = closedTrades.slice(0, n); // closedTrades已经是最新在前
+    if(recent.length===0) return { n, actualN:0, winRate:null };
+    const wins = recent.filter(t=>t.realizedPL>0).length;
+    return { n, actualN: recent.length, winRate: wins/recent.length*100 };
+  });
+}
+function computeRollingReturn(windowDaysArr){
+  if(!navSnapshots || navSnapshots.length<2) return windowDaysArr.map(d=>({ d, ret:null }));
+  const sorted = [...navSnapshots].sort((a,b)=> new Date(a.date)-new Date(b.date));
+  const latest = sorted[sorted.length-1];
+  const latestTs = new Date(latest.date).getTime();
+  return windowDaysArr.map(d=>{
+    const targetTs = latestTs - d*86400000;
+    // 找不晚于latestTs、最接近targetTs的快照；如果最早的快照都比targetTs晚（数据积累
+    // 时间还不够N天），退回用最早那个快照，实际跨度会比N天短，如实标注actualDays。
+    let ref = sorted.find(s=>new Date(s.date).getTime()>=targetTs) || sorted[0];
+    if(!ref || ref.value<=0) return { d, ret:null };
+    const ret = (latest.value-ref.value)/ref.value*100;
+    const actualDays = Math.round((latestTs-new Date(ref.date).getTime())/86400000);
+    return { d, ret, refDate: ref.date, actualDays };
+  });
+}
+function renderRollingStats(){
+  const el = document.getElementById('rollingStatsPanel');
+  if(!el) return;
+  const wrParts = computeRollingWinRate([10,20,50]);
+  const retParts = computeRollingReturn([7,30,90]);
+  const hasAnyWr = wrParts.some(p=>p.winRate!=null);
+  const hasAnyRet = retParts.some(p=>p.ret!=null);
+  if(!hasAnyWr && !hasAnyRet){
+    el.innerHTML = '<div class="lang-en" style="padding:8px 0;color:var(--muted);">暂无数据——需要至少一笔已平仓交易（滚动胜率）或至少2个净值快照（滚动收益率）</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600;">滚动胜率 Rolling Win Rate（按最近平仓的N笔）</div>
+    <div class="stat-grid" style="margin-bottom:14px;">
+      ${wrParts.map(p=>`
+        <div class="stat-card">
+          <div class="stat-label">最近${p.n}笔</div>
+          <div class="stat-value ${p.winRate!=null?(p.winRate>=50?'pos':'neg'):'neu'}">${p.winRate!=null?p.winRate.toFixed(1)+'%':'—'}</div>
+          <div class="stat-sub">${p.actualN>0?`实际${p.actualN}笔`:'暂无数据'}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600;">滚动收益率 Rolling Return（净值快照，按自然天数最接近的窗口）</div>
+    <div class="stat-grid">
+      ${retParts.map(p=>`
+        <div class="stat-card">
+          <div class="stat-label">最近${p.d}天</div>
+          <div class="stat-value ${p.ret!=null?pclass(p.ret):'neu'}">${p.ret!=null?(p.ret>=0?'+':'')+p.ret.toFixed(2)+'%':'—'}</div>
+          <div class="stat-sub">${p.actualDays!=null?(p.actualDays===p.d?'':`实际跨度${p.actualDays}天`):'暂无数据'}</div>
+        </div>
+      `).join('')}
     </div>
   `;
 }
