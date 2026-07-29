@@ -580,6 +580,15 @@
       <div id="capitalEfficiencyPanel"></div>
     </div>
 
+    <!-- V1.1: Portfolio Risk Engine — 相关性簇风险(代理版) -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title">
+        <span>🔗 相关性簇风险 / Correlation Cluster Risk</span>
+        <span class="hint">高相关持仓的合计风险，复用③相关性矩阵+④硬止损，非真实行业/因子归类</span>
+      </div>
+      <div id="corrClusterPanel"></div>
+    </div>
+
     <!-- MODULE ⑩: PORTFOLIO TIMELINE (reuses computePortfolioHealth() output — no new computation) -->
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-title">
@@ -665,8 +674,8 @@
         <span class="lang-en" id="stopEngineUpdated">尚未计算</span>
       </div>
       <p class="hint" style="margin-bottom:10px;">
-        ①周线EMA10/20(大局判断) ②ATR跟踪止损(主止损候选) ③EMA20/EMA50趋势止损 ④摆动低点结构止损 ⑤动态锁利润 —— 五层综合后输出
-        <b>主止损 Primary / 次级止损 Secondary / 紧急止损 Emergency</b> 三档，外加时间止损提示。仅分析已持仓代码。
+        ①周线EMA10/20(大局判断) ②ATR跟踪止损 ③EMA20/EMA50趋势止损 ④区间最低点结构止损 ⑤动态锁利润 —— 五层综合后输出
+        <b>硬止损 Hard Stop / 趋势离场 Trend Exit / 利润锁定 Profit Stop / 紧急止损 Emergency Stop</b> 四个职责分离的角色（Exit State），外加"最近有效保护线"作为兼容展示、时间止损提示。仅分析已持仓代码。
       </p>
       <button class="primary small" id="computeStopEngineBtn" onclick="runWithButtonLoading(this,'计算中',computeStopEngine)">🎯 计算止损引擎 / Compute Stop Engine</button>
       <span class="hint" style="margin-left:8px;">复用①个股智能引擎的历史K线缓存，逐票请求+300ms间隔，可能需要几秒</span>
@@ -691,13 +700,14 @@
               <th style="cursor:pointer;" onclick="sortStopEngine('price')">现价<span class="ssa" data-key="price"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('holdDays')">持仓天数<span class="ssa" data-key="holdDays"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('rMultiple')">R倍数<span class="ssa" data-key="rMultiple"></span></th>
-              <th>主止损 Primary</th><th style="cursor:pointer;" onclick="sortStopEngine('primaryDist')">距现价<span class="ssa" data-key="primaryDist"></span></th>
-              <th>次级止损 Secondary</th><th style="cursor:pointer;" onclick="sortStopEngine('secondaryDist')">距现价<span class="ssa" data-key="secondaryDist"></span></th>
+              <th title="P1-6修复：这一栏不是'必须执行的主止损'，只是离现价最近的候选——可能是ATR/结构/趋势止损，也可能是利润锁定线（保护浮盈而非风险基准），具体角色见数值旁的标签。真正的风险基准见右侧'硬止损 Hard Stop'列。">最近有效保护线 Nearest Active Level<span class="hint" style="display:block;font-weight:400;">(非必须执行的主止损，见角色标签)</span></th><th style="cursor:pointer;" onclick="sortStopEngine('primaryDist')">距现价<span class="ssa" data-key="primaryDist"></span></th>
+              <th style="color:var(--accent2);">硬止损 Hard Stop<span class="hint" style="display:block;font-weight:400;color:var(--muted);">(排除利润锁定，真实下行风险，风险预算/组合风险专用此列)</span></th>
+              <th title="第二接近现价的候选保护线，仅供参考">次接近保护线 2nd Nearest</th><th style="cursor:pointer;" onclick="sortStopEngine('secondaryDist')">距现价<span class="ssa" data-key="secondaryDist"></span></th>
               <th>紧急止损 Emergency</th><th style="cursor:pointer;" onclick="sortStopEngine('emergencyDist')">距现价<span class="ssa" data-key="emergencyDist"></span></th>
               <th style="cursor:pointer;" onclick="sortStopEngine('weeklyVerdict')">周线大局<span class="ssa" data-key="weeklyVerdict"></span></th><th>提示</th>
             </tr>
           </thead>
-          <tbody id="stopEngineBody"><tr><td colspan="12" class="lang-en" style="padding:16px;">点击上方"计算止损引擎"按钮开始</td></tr></tbody>
+          <tbody id="stopEngineBody"><tr><td colspan="13" class="lang-en" style="padding:16px;">点击上方"计算止损引擎"按钮开始</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -709,9 +719,11 @@
         <span class="hint" id="riskBudgetUpdated">复用①持仓与④止损引擎数据</span>
       </div>
       <p class="hint" style="margin-bottom:10px;">
-        风险占用 ≠ 仓位市值占比：这里衡量的是"如果该持仓跌到止损位，实际会亏掉多少钱"，占组合总市值的比例。
-        优先使用④五层止损引擎算出的主止损位；尚未计算止损引擎但填有手动止损价的持仓，退化使用手动止损价估算；
+        风险占用 ≠ 仓位市值占比：这里衡量的是"如果该持仓跌到止损位，实际会亏掉多少钱"。
+        优先使用④五层止损引擎中的<strong style="color:var(--text);">硬止损 Hard Stop</strong>（已排除利润锁定层，不会把浮盈保护线误当成亏损风险）；
+        尚未计算止损引擎但填有手动止损价的持仓，退化使用手动止损价估算；
         两者都没有的持仓计入"未知风险"，不纳入使用率（因为无法估算，不代表零风险）。
+        风险预算上限按<strong style="color:var(--text);">账户净值</strong>（持仓市值 + 设置中填写的现金余额）计算，而非仅按持仓市值。
       </p>
       <div class="summary-grid" id="riskBudgetCards">
         <div class="card"><div class="card-label">组合风险预算上限</div><div class="card-value neu">6%</div></div>
@@ -724,7 +736,7 @@
           <thead>
             <tr>
               <th class="sticky-col">代码</th><th>现价</th><th>止损基准</th><th>止损来源</th>
-              <th>风险金额</th><th>占组合总值%</th>
+              <th>风险金额</th><th>占持仓市值%<span class="hint" style="display:inline;font-size:10px;">(非账户净值基准)</span></th>
             </tr>
           </thead>
           <tbody id="riskBudgetBody"><tr><td colspan="6" class="lang-en" style="padding:16px;">暂无持仓</td></tr></tbody>
@@ -1468,6 +1480,21 @@
       <div class="hint">⚠ 止盈默认用成本价：确保触发时相对你的买入成本真正是盈利。若改用市价，在深度亏损持仓上可能出现"止盈价低于成本价"、触发时实际是亏损离场的情况。</div>
     </div>
     <div class="field">
+      <label>高相关簇风险上限 Max Correlation Cluster Risk (%)</label>
+      <input id="maxCorrelationClusterRiskPct" type="number" step="0.1" min="0.1" max="15">
+      <div class="hint">组合智能Tab"相关性簇风险"面板用——历史价格相关系数超过0.7的持仓被视为同一风险来源，合计硬止损风险占账户净值超过此上限时会标红提示。</div>
+    </div>
+    <div class="field">
+      <label>单笔风险上限 Max Position Risk (%)</label>
+      <input id="maxPositionRiskPct" type="number" step="0.1" min="0.1" max="10">
+      <div class="hint">Pyramid Engine加仓判定用——某只票现有的硬止损风险金额占账户净值的比例，若已达到/超过这个上限，即使评分和动量都好，也不会再建议加仓。</div>
+    </div>
+    <div class="field">
+      <label>预设加仓规模 Assumed Pyramid Add Size (% of current qty)</label>
+      <input id="pyramidAddSizePct" type="number" step="5" min="5" max="200">
+      <div class="hint">P1修复：本系统没有独立的"计划加仓数量"录入，Pyramid Engine在判定加仓信号时，会假设加仓规模是现有持仓数量的这个百分比、以现价买入、沿用同一硬止损位，估算"加仓后风险"是否会超过单笔风险上限，而不是只看现有风险。默认50%（即加仓后总仓位=现有的1.5倍）。</div>
+    </div>
+    <div class="field">
       <label>组合风险预算上限 Max Portfolio Risk Budget (%)</label>
       <input id="maxPortfolioRiskPct" type="number" step="0.5" min="0.5" max="20">
       <div class="hint">"风险指标"Tab里"组合风险预算"的计算基准——即所有持仓若同时跌到各自止损位，允许亏损的账户净值百分比上限。机构常用范围3-8%，而非把组合总市值当作100%基准。</div>
@@ -1650,7 +1677,7 @@
     </div>
     <div class="field" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
       <label style="font-weight:600;color:var(--accent2);">📈 加仓提醒 / Add-to-Position Alert</label>
-      <div class="hint" style="margin-bottom:8px;">现价跌到目标价（或以下）时，汇总行提示+Discord推送，方便判断是否摊薄成本</div>
+      <div class="hint" style="margin-bottom:8px;">现价跌到目标价（或以下）时，汇总行提示+Discord推送——仅代表进入观察区，是否加仓需结合①个股评分、④止损结构、大盘环境综合判断，不能仅因价格低于成本价而加仓</div>
       <select id="tdAddZoneMethod" onchange="toggleAddZoneMethodFields()" style="margin-bottom:8px;">
         <option value="manual">手动输入价格 Manual</option>
         <option value="pct">固定百分比（相对成本价）Fixed % below cost</option>
@@ -2182,20 +2209,63 @@ const _PRICE = (function () {
   const barsCache = {}; // 轻量内存缓存，key = source+symbol+from+to，TTL 5分钟
   const BARS_CACHE_TTL = 5 * 60 * 1000;
 
-  async function fetchBars(symbol, { from, to, limit = 700, timeframe = '1Day', forceSource } = {}) {
+  // BUGFIX: validates that a source's response is actually usable — an HTTP 200
+  // with an empty array, or with malformed bars, was previously treated as
+  // "success" (no exception thrown), so the fallback chain below never
+  // triggered even though the data was useless. Throwing here routes it
+  // through the same catch/fallback logic as a network error.
+  //
+  // P2 (code review 2026-07): the flat default of 5 bars is enough to prove
+  // "we got SOME usable data" but says nothing about whether it's enough for
+  // any particular downstream indicator — ATR14 wants ~20 bars, EMA50 wants
+  // ~60, EMA200 wants ~210, a 1-year Beta or max-drawdown wants ~200-252, a
+  // correlation needs ~60 overlapping return observations. PURPOSE_MIN_BARS
+  // lets a caller that knows what it's about to compute ask for a
+  // purpose-appropriate floor instead of the generic 5, via fetchBars(symbol,
+  // {purpose:'ema200'}) or an explicit {minBars:220}. Existing callers that
+  // don't pass purpose/minBars keep today's behavior unchanged.
+  const PURPOSE_MIN_BARS = {
+    atr14: 20,
+    ema50: 60,
+    ema200: 210,
+    beta1y: 200,
+    maxDrawdown1y: 200,
+    correlation: 60,
+  };
+  function validateBars(data, minBars = 5) {
+    if (!Array.isArray(data) || data.length < minBars) {
+      throw new Error(`返回数据不足（${Array.isArray(data)?data.length:0}根，需≥${minBars}根）`);
+    }
+    const allValid = data.every(b => b && b.t!=null && Number.isFinite(b.c) && Number.isFinite(b.h) && Number.isFinite(b.l));
+    if (!allValid) throw new Error('返回K线字段不完整');
+    return data;
+  }
+  // BUGFIX: Twelve Data (and any other source keyed only by `limit`, not a
+  // real date range) previously returned "most recent N bars" regardless of
+  // the requested from/to — meaning a fallback to Twelve could silently use a
+  // different observation window than Alpaca would have, making Beta/max
+  // drawdown/correlation/RS not comparable across a fallback event. Every
+  // source's result is now filtered to the requested range at a single exit
+  // point, instead of trusting each API to honor from/to itself.
+  function filterBarsByRange(data, from, to) {
+    if (!Array.isArray(data)) return data;
+    return data.filter(b => (!from || b.t >= from) && (!to || b.t <= to));
+  }
+
+  async function fetchBars(symbol, { from, to, limit = 700, timeframe = '1Day', forceSource, preferredSource, strictSource = false, purpose, minBars } = {}) {
+    // preferredSource是新写法；forceSource保留作为向后兼容别名，语义不变（老代码
+    // 里 forceSource:'alpaca' 这种调用不用改，但如今真正的"强制/严格"需要显式传
+    // strictSource:true才生效——见下方注释）。
+    const wantedSource = preferredSource || forceSource;
+    // P2: purpose-specific minimum bar count, see PURPOSE_MIN_BARS above.
+    // Explicit minBars always wins if both are given.
+    const effectiveMinBars = minBars!=null ? minBars : (purpose && PURPOSE_MIN_BARS[purpose]!=null ? PURPOSE_MIN_BARS[purpose] : 5);
     // 指数代码强制走 Yahoo（Alpaca/Twelve/Polygon 免费版都不支持 ^ 开头代码）
     if (symbol.startsWith('^')) {
       const r = await fetchYahooBars(symbol, { from, to });
       return r.bars;
     }
 
-    // BUGFIX: cache key previously didn't include the data source at all
-    // (`${symbol}|${from}|${to}|${timeframe}`) — if the resolved source changed
-    // between two calls within the cache TTL window (e.g. Alpaca briefly marked
-    // unhealthy → fell back to Yahoo → Alpaca recovered), the second call could
-    // silently be served the first call's Yahoo-sourced bars while believing it
-    // was reading fresh Alpaca data. The key now always includes the source that
-    // actually produced the cached data.
     if (timeframe !== '1Day') {
       // 非日线粒度（如 1Hour）目前只有 Alpaca 原生支持——Twelve/Polygon/Yahoo 的接口不认
       // timeframe 参数，请求什么都只会静默返回日线数据。绝不能让它们在这里"降级"进来冒充
@@ -2209,28 +2279,41 @@ const _PRICE = (function () {
       return data || [];
     }
 
-    const intendedSource = forceSource || (await resolveSource());
+    const intendedSource = wantedSource || (await resolveSource());
     const intendedCacheKey = `${intendedSource}|${symbol}|${from}|${to}|${timeframe}`;
     const cachedIntended = barsCache[intendedCacheKey];
     if (cachedIntended && Date.now() - cachedIntended.ts < BARS_CACHE_TTL) return cachedIntended.data;
 
+    async function fetchFrom(src) {
+      let data;
+      if (src === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
+      else if (src === 'twelve') data = await fetchTwelveBars(symbol, { limit });
+      else if (src === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
+      else data = (await fetchYahooBars(symbol, { from, to })).bars;
+      data = filterBarsByRange(data, from, to);
+      return validateBars(data, effectiveMinBars);
+    }
+
     let source = intendedSource, data;
     try {
-      if (source === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
-      else if (source === 'twelve') data = await fetchTwelveBars(symbol, { limit });
-      else if (source === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
-      else data = (await fetchYahooBars(symbol, { from, to })).bars;
+      data = await fetchFrom(source);
     } catch (e) {
+      // BUGFIX: strictSource — when the caller explicitly asked for one specific
+      // source (e.g. comparing data quality across providers, or auditing a
+      // discrepancy), silently substituting a different source used to be the
+      // ONLY behavior available despite the parameter being named "forceSource".
+      // With strictSource:true, a failure on the requested source now fails
+      // the whole call instead of being silently masked by a fallback.
+      if (strictSource && wantedSource) {
+        throw new Error(`${symbol}: 严格模式下指定源 ${wantedSource} 失败，未回退 — ${e.message}`);
+      }
       // 当前源失败：标记不健康，立刻尝试链上下一个源（不用整场都卡在坏源上）
       healthCache[source] = { ok: false, ts: Date.now() };
       const order = cfg.preferOrder.filter((s) => s !== source);
       let fellBackTo = null;
       for (const next of order) {
         try {
-          if (next === 'alpaca') data = await fetchAlpacaBars(symbol, { from, to, limit, timeframe });
-          else if (next === 'twelve') data = await fetchTwelveBars(symbol, { limit });
-          else if (next === 'polygon') data = await fetchPolygonBars(symbol, { from, to, limit });
-          else data = (await fetchYahooBars(symbol, { from, to })).bars;
+          data = await fetchFrom(next);
           fellBackTo = next;
           break;
         } catch (e2) { continue; }
@@ -2729,6 +2812,9 @@ let settings = {
   priceAlertThresholdPct: 10, // send Discord alert if price moves >X% from prevClose
   earningsAlertDays: 2,       // send Discord alert X days before earnings
   cashBalance: 0,             // cash / buying power not invested in positions
+  maxPositionRiskPct: 1, // 单笔风险上限（占账户净值%），Pyramid Engine加仓门槛用
+  pyramidAddSizePct: 50, // P1修复：Pyramid Engine估算"加仓后风险"时假设的加仓规模（占现有持仓数量%）
+  maxCorrelationClusterRiskPct: 2.5, // 高相关簇风险上限（占账户净值%），代理版组合风险引擎用
   maxPortfolioRiskPct: 6, // 组合风险预算上限（占账户净值%），专业惯例通常3-8%，而非把总市值当100%基准
   defaultStopProfile:'swing',
   slMethod:'pct', slBasisStop:'market', slBasisProfit:'cost', slPctStop:8, slPctProfit:20,
@@ -2879,7 +2965,7 @@ function loadState(){
   }catch(e){ positions = []; }
   // migration: back-fill R-Multiple baseline (initialRisk) for lots created before this field
   // existed but already had a stop-loss set — otherwise they'd show "R未知" indefinitely.
-  positions.forEach(p=>{ if(p.initialRisk===undefined) setInitialRiskIfNeeded(p); });
+  positions.forEach(p=>{ if(p.initialRisk===undefined || p.initialEmergencyStop===undefined || !p.exitPlan) setInitialRiskIfNeeded(p); migratePositionOriginalQty(p); });
   try{
     const s = localStorage.getItem(SETTINGS_KEY);
     if(s) settings = Object.assign(settings, JSON.parse(s));
@@ -2979,7 +3065,7 @@ function applyCloudSyncPayload(data){
   if(!data || typeof data!=='object') return;
   suppressCloudSync = true;
   try{
-    if(Array.isArray(data.positions)){ positions = data.positions; positions.forEach(p=>{ if(p.initialRisk===undefined) setInitialRiskIfNeeded(p); }); saveState(); }
+    if(Array.isArray(data.positions)){ positions = data.positions; positions.forEach(p=>{ if(p.initialRisk===undefined || p.initialEmergencyStop===undefined || !p.exitPlan) setInitialRiskIfNeeded(p); migratePositionOriginalQty(p); }); saveState(); }
     if(Array.isArray(data.closedTrades)){ closedTrades = data.closedTrades; saveClosedTrades(); }
     if(data.tickerSettings && typeof data.tickerSettings==='object' && !Array.isArray(data.tickerSettings)){ tickerSettings = data.tickerSettings; saveTickerSettings(); }
     if(Array.isArray(data.watchlist)){ watchlist = data.watchlist; saveWatchlist(); }
@@ -3218,7 +3304,127 @@ function applySummaryCollapseState(){
   }
 }
 
+// 相关性矩阵颜色映射（原先在两个渲染函数里各自重复定义一份，合并为单一来源，
+// 避免以后只改了一处、导致两个相关性矩阵显示的颜色标准不一致）
+function corrColor(v){
+  if(v===null) return 'var(--panel2)';
+  if(v>0.7) return 'rgba(239,68,68,0.3)';
+  if(v>0.4) return 'rgba(245,158,11,0.25)';
+  if(v<-0.3) return 'rgba(34,197,94,0.2)';
+  return 'rgba(45,212,191,0.1)';
+}
+
+// 与 todayStr() 同一套纽约时区口径，但可用于任意历史时间戳（不只是"现在"）。
+// 用于修复：某些地方需要判断"这条历史记录是不是今天生成的"，如果拿UTC日期
+// 去跟 todayStr() 的纽约日期比较，纽约夜间时段会出现两者不一致的情况。
+function dateStrNY(tsOrDate){
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date(tsOrDate));
+}
+
 function heldTickers(){ return [...new Set(positions.map(p=>p.ticker))]; }
+
+/* ================================================================
+   V1.1 — Portfolio Risk Engine: 相关性簇风险（代理版）
+   基于③已算出的两两价格相关系数(piCorrState.matrix)，把相关系数超过阈值的
+   持仓分到同一组（连通分量，不要求两两都超阈值，A-B、B-C超阈值即可把A/B/C分
+   到同一组），然后把组内各持仓④的硬止损风险金额加总，算占账户净值的比例。
+   明确标注：这是基于历史价格相关系数的代理分组，不是真实的行业/因子归类——
+   免费数据做不到真正的因子暴露分析，但同涨同跌的股票即使分属不同行业，用
+   价格相关性也能大致抓到"这些票其实是同一个风险来源"这件事。
+   ================================================================ */
+const CORR_CLUSTER_THRESHOLD = 0.7;
+function computeCorrelationClusters(){
+  if(!piCorrState || !piCorrState.matrix) return null;
+  const tickers = piCorrState.validTickers || [];
+  if(tickers.length<2) return { clusters:[], threshold:CORR_CLUSTER_THRESHOLD };
+
+  // 连通分量：把相关系数超过阈值的股票连起来分组
+  const parent = {};
+  tickers.forEach(t=>parent[t]=t);
+  function find(t){ while(parent[t]!==t){ t=parent[t]; } return t; }
+  function union(a,b){ const ra=find(a), rb=find(b); if(ra!==rb) parent[ra]=rb; }
+  tickers.forEach(ta=>{
+    tickers.forEach(tb=>{
+      if(ta>=tb) return;
+      const v = piCorrState.matrix[ta] && piCorrState.matrix[ta][tb];
+      if(v!=null && v>CORR_CLUSTER_THRESHOLD) union(ta,tb);
+    });
+  });
+  const groups = {};
+  tickers.forEach(t=>{ const r=find(t); if(!groups[r]) groups[r]=[]; groups[r].push(t); });
+
+  const rb = computeRiskBudget();
+  const rowByTicker = {};
+  if(rb) rb.rows.forEach(r=>{ rowByTicker[r.ticker]=r; });
+
+  const clusters = Object.values(groups)
+    .filter(g=>g.length>=2) // 只展示真正"抱团"的组，单独一只股票不算"簇"
+    .map(g=>{
+      // BUGFIX (P1-5, code review 2026-07): `rowByTicker[t]?.riskAmount || 0`
+      // silently treated "we don't have a risk number for this ticker" the
+      // same as "this ticker's risk is $0" — a stock with no computed hard-
+      // stop risk (data not yet fetched, insufficient bars, etc.) simply
+      // vanished from the cluster total instead of being flagged as an
+      // unknown. That understates the true exposure and, worse, can make an
+      // actually-risky cluster display as "under the limit" just because one
+      // member's risk couldn't be computed. Known and unknown are now kept
+      // separate: riskAmount is a sum of ONLY the tickers we actually have a
+      // number for (a floor, not the true total), and unknownTickers lists
+      // whoever is missing so the UI can say "at least $X, plus N unknown"
+      // instead of presenting a false all-clear.
+      const knownTickers = g.filter(t=>rowByTicker[t]?.riskAmount!=null);
+      const unknownTickers = g.filter(t=>rowByTicker[t]?.riskAmount==null);
+      const riskAmount = knownTickers.reduce((s,t)=>s+rowByTicker[t].riskAmount, 0);
+      const accountEquity = rb ? rb.accountEquity : null;
+      const riskPct = (accountEquity && accountEquity>0) ? (riskAmount/accountEquity*100) : null;
+      return { tickers:g, riskAmount, riskPct, unknownTickers, hasUnknown: unknownTickers.length>0 };
+    })
+    .sort((a,b)=>(b.riskPct??-1)-(a.riskPct??-1));
+
+  return { clusters, threshold:CORR_CLUSTER_THRESHOLD };
+}
+function renderCorrelationClusters(){
+  const el = document.getElementById('corrClusterPanel');
+  if(!el) return;
+  const result = computeCorrelationClusters();
+  if(!result){
+    el.innerHTML = '<div class="hint">暂无相关性数据，请先在本页面上方计算相关性矩阵。</div>';
+    return;
+  }
+  if(result.clusters.length===0){
+    el.innerHTML = `<div class="hint">当前持仓中，没有发现两两相关系数超过${result.threshold}的"抱团"分组（或持仓不足2只/相关性尚未计算）。</div>`;
+    return;
+  }
+  const maxClusterRiskPct = settings.maxCorrelationClusterRiskPct ?? 2.5;
+  el.innerHTML = `
+    <div class="hint" style="margin-bottom:8px;color:var(--amber);">⚠ 以下分组基于历史价格相关系数（非真实行业/因子归类）：相关系数>${result.threshold}的持仓被视为"同一风险来源"，即使分属不同行业。</div>
+    ${result.clusters.map(c=>{
+      // BUGFIX (P1-5): a cluster with unknown members can never be shown as
+      // definitively "safe" — riskPct here is only a floor (known members
+      // only), so if it happens to sit under the limit that does NOT mean the
+      // true total is under the limit too. `over` OR `hasUnknown` both force
+      // the amber/red "can't confirm safe" treatment.
+      const over = c.riskPct!=null && c.riskPct>=maxClusterRiskPct;
+      const flagged = over || c.hasUnknown;
+      return `
+      <div class="dim" style="margin-bottom:8px;border-color:${flagged?(over?'var(--red)':'var(--amber)'):'var(--border)'};">
+        <div class="dim-head">
+          <span>${c.tickers.join(' + ')}</span>
+          <b style="color:${flagged?(over?'var(--red)':'var(--amber)'):'var(--text)'};">${c.riskPct!=null?(c.hasUnknown?'≥':'')+c.riskPct.toFixed(2)+'%':'未知'}</b>
+        </div>
+        <div class="metrics-line">
+          ${c.hasUnknown?'已知':'合计'}硬止损风险 ${fmt$(c.riskAmount)}，占账户净值 ${c.riskPct!=null?(c.hasUnknown?'至少 ':'')+c.riskPct.toFixed(2)+'%':'未知'}
+          ${over?`（已达到/超过相关组风险上限${maxClusterRiskPct}%，即使总组合风险预算没超限，这几只票也已构成集中风险）`:''}
+          ${c.hasUnknown?`<br>⚠ ${c.unknownTickers.join('、')} 缺少硬止损风险数据，未计入上方金额——实际风险不低于此数，该簇不能视为"安全"，建议先补全数据再评估`:''}
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+
 
 /* ================================================================
    BUGFIX (post v2_10_1 review): analyzeStopLevels() picks primary/
@@ -3246,7 +3452,7 @@ function resolveLiveStopSelection(stopObj){
   const rawCandidates = [
     { key:'atr', label:'ATR跟踪止损', value: stopObj.atrTrailingStop },
     { key:'trend', label:'趋势止损(EMA)', value: stopObj.trendStop },
-    { key:'structure', label:'结构止损(摆动低点)', value: stopObj.structureStop },
+    { key:'structure', label:'结构止损(区间最低点)', value: stopObj.structureStop },
     { key:'profitLock', label:'利润锁定', value: stopObj.profitLockStop },
   ].filter(c=>c.value!=null && isFinite(c.value) && pp.eligibleKeys.includes(c.key));
   const validNow = rawCandidates.filter(c=>c.value < refPrice).sort((a,b)=>b.value-a.value);
@@ -3257,7 +3463,45 @@ function resolveLiveStopSelection(stopObj){
     secondary = remaining.find(c=>c.value < refPrice) || remaining[0] || null;
   }
   const breachedLayers = rawCandidates.filter(c=>c.value >= refPrice);
-  return { ...stopObj, primary, secondary, breachedLayers };
+  // 与analyzeStopLevels()同一套逻辑：硬止损排除利润锁定，供风险预算等场景使用
+  const hardStopCandidates = rawCandidates.filter(c=>c.key!=='profitLock');
+  const hardStopValidNow = hardStopCandidates.filter(c=>c.value < refPrice).sort((a,b)=>b.value-a.value);
+  const hardStop = hardStopValidNow[0] || null;
+  let emergencyHierarchyConflict = stopObj.emergencyHierarchyConflict;
+  if(stopObj.emergencyStop!=null){
+    const ceilings = [primary?primary.value:null, secondary?secondary.value:null].filter(v=>v!=null);
+    emergencyHierarchyConflict = ceilings.length>0 && stopObj.emergencyStop >= Math.min(...ceilings);
+  }
+  // V1.1: exitState四个角色也要跟着实时价重新判断，否则hardStop.breached/
+  // trendExit.state会停留在计算止损引擎那一刻的日线收盘价判断，跟表格里已经
+  // 刷新的距离百分比不一致。
+  const exitState = {
+    hardStop: hardStop ? {
+      value: hardStop.value, source: hardStop.label,
+      reason: (stopObj.exitState?.hardStop?.reason) || '',
+      breached: refPrice<=hardStop.value
+    } : {
+      value: null, source: null,
+      reason: hardStopCandidates.length>0 ? '当前策略档位下，所有硬止损候选层均已被现价击穿' : '数据不足，无有效硬止损候选',
+      breached: hardStopCandidates.length>0 && hardStopCandidates.every(c=>c.value>=refPrice)
+    },
+    trendExit: {
+      value: stopObj.trendStop, source:'EMA趋势止损', reason: stopObj.trendReason,
+      state: (stopObj.trendStop!=null && refPrice<=stopObj.trendStop) ? 'exit' : 'normal'
+    },
+    profitStop: {
+      value: stopObj.profitLockStop, source:'利润锁定', reason: stopObj.profitLockReason,
+      active: stopObj.profitLockStop!=null
+    },
+    emergencyStop: {
+      value: stopObj.emergencyStop, initialValue: stopObj.exitState?.emergencyStop?.initialValue ?? null,
+      reason: stopObj.emergencyReason, conflict: emergencyHierarchyConflict,
+      // P0-2: recompute against the live reference price, not the calc-time
+      // price baked into stopObj.exitState.emergencyStop.lotRisk.
+      lotRisk: lotBasedEmergencyRisk({ lots: stopObj.lots }, refPrice, stopObj.emergencyStop)
+    }
+  };
+  return { ...stopObj, primary, secondary, hardStop, breachedLayers, emergencyHierarchyConflict, exitState };
 }
 
 /* ================================================================
@@ -3299,12 +3543,18 @@ async function getStockBarsCached(ticker){
   const cached = stockBarsCache[ticker];
   if(cached && cached.date === todayStr() && cached.bars && cached.bars.length>0) return cached.bars;
   const bars = await fetchDailyBars(ticker, 300); // ~252 trading days + buffer
-  if(bars){
+  // BUGFIX: `if(bars)` alone doesn't defend against an empty array — `[]` is
+  // truthy in JS. fetchDailyBars() already normalizes an empty response to
+  // null before returning, so this wasn't reachable as an active bug, but it
+  // relied on that upstream behavior implicitly. Checking length here too
+  // means this function is correct on its own, independent of what any
+  // caller does or how fetchDailyBars might change in the future.
+  if(Array.isArray(bars) && bars.length>0){
     stockBarsCache[ticker] = { date: todayStr(), bars };
     saveStockBarsCache();
     return bars;
   }
-  return cached ? cached.bars : null; // stale fallback if today's fetch failed
+  return (cached && cached.bars && cached.bars.length>0) ? cached.bars : null; // stale fallback if today's fetch failed
 }
 
 // IRON RULE: free-tier Alpaca accounts return empty bodies from batch
@@ -3738,7 +3988,7 @@ function renderStockTable(){
 /* ================================================================
    RISK INTELLIGENCE ENGINE — 五层止损引擎 (v2_04)
    ①周线EMA10/20(大局判断) ②ATR跟踪止损(主止损候选) ③EMA20/EMA50趋势止损
-   ④摆动低点/结构止损 ⑤动态锁利润(基于R倍数) + 时间止损 + 紧急止损。
+   ④区间最低点/结构止损 ⑤动态锁利润(基于R倍数) + 时间止损 + 紧急止损。
    数据层完全复用①个股智能引擎的 fetchAllStockBarsSequential/getStockBarsCached
    （逐票顺序请求+300ms间隔+当日缓存），周线由日线聚合得出，不单独请求周线端点。
    免费数据红线：无额外API依赖，纯本地指标计算。
@@ -3811,20 +4061,61 @@ function aggregateWeeklyBars(dailyBars){
 function getHeldPositionGroups(){
   const groups = {};
   positions.forEach(p=>{
-    if(!groups[p.ticker]) groups[p.ticker] = { ticker:p.ticker, qty:0, costSum:0, buyDates:[], stopLoss:null };
+    if(!groups[p.ticker]) groups[p.ticker] = { ticker:p.ticker, qty:0, costSum:0, buyDates:[], stopLoss:null, initialEmergencyStops:[], lots:[] };
     const g = groups[p.ticker];
     g.qty += p.qty;
     g.costSum += p.cost*p.qty;
     if(p.buyDate) g.buyDates.push(p.buyDate);
     if(p.stopLoss!=null) g.stopLoss = p.stopLoss;
+    if(p.initialEmergencyStop!=null) g.initialEmergencyStops.push(p.initialEmergencyStop);
+    // P0-2 fix: keep the raw per-lot data around so downstream risk math can
+    // compute true per-lot exposure instead of collapsing every lot into one
+    // blended number (see lotBasedEmergencyRisk() below for why that matters).
+    g.lots.push({ id:p.id, qty:p.qty, cost:p.cost, initialEmergencyStop: p.initialEmergencyStop ?? null });
   });
   return Object.values(groups).map(g=>({
     ticker: g.ticker,
     qty: g.qty,
     avgCost: g.qty>0 ? g.costSum/g.qty : null,
     oldestBuyDate: g.buyDates.filter(Boolean).sort()[0] || null,
-    manualStop: g.stopLoss
+    manualStop: g.stopLoss,
+    lots: g.lots,
+    // BUGFIX (P0-2, code review 2026-07): this used to take Math.min(...) of
+    // each lot's own initial emergency floor and call it "most conservative".
+    // It's the opposite: a LOWER stop price allows MORE downside before
+    // triggering, so Math.min picks the LOOSEST protection of any lot and
+    // applies it to the whole blended position — e.g. a $100-cost lot with an
+    // $85 floor gets silently re-protected only down to a $50-cost lot's
+    // $42.50 floor, an 8x wider catastrophe tolerance than that lot's owner
+    // ever agreed to. The conservative choice is Math.max: the tightest
+    // (highest) floor among lots, so no single lot's risk tolerance is
+    // silently loosened by blending it with a cheaper lot. This is still a
+    // simplification (see lotBasedEmergencyRisk() for the real per-lot dollar
+    // math used in risk displays), but it fixes the direction of the error.
+    initialEmergencyStop: g.initialEmergencyStops.length ? Math.max(...g.initialEmergencyStops) : null
   }));
+}
+
+// P0-2 (code review 2026-07): true per-lot Emergency-Stop dollar-risk sum.
+// The blended group.initialEmergencyStop above is still a single price used
+// for display/comparison purposes, but actual dollar risk must be computed
+// lot-by-lot — each lot only "knows about" its own initialEmergencyStop, and
+// using one blended stop price against the ticker's total qty over/under-
+// states risk for any lot whose own floor differs from the blended one.
+// Falls back to the blended `fallbackStop` (usually the resolved
+// exitState.emergencyStop.value) for lots that have no initialEmergencyStop
+// of their own (e.g. pre-migration data).
+function lotBasedEmergencyRisk(group, price, fallbackStop){
+  if(!group || !Array.isArray(group.lots) || price==null) return null;
+  const rows = group.lots.map(lot=>{
+    const stop = lot.initialEmergencyStop!=null ? lot.initialEmergencyStop : fallbackStop;
+    const riskAmount = stop!=null ? Math.max(0, price - stop) * lot.qty : null;
+    return { lotId: lot.id, qty: lot.qty, stop, riskAmount };
+  });
+  const known = rows.filter(r=>r.riskAmount!=null);
+  const totalRiskAmount = known.length ? known.reduce((s,r)=>s+r.riskAmount,0) : null;
+  const hasUnknown = rows.some(r=>r.riskAmount==null);
+  return { rows, totalRiskAmount, hasUnknown };
 }
 
 // Core five-layer analysis for a single ticker. Returns price levels PLUS a
@@ -3926,7 +4217,12 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
     }
   }
 
-  /* ---------- LAYER 4: 摆动低点 / 结构止损 ---------- */
+  /* ---------- LAYER 4: 区间最低点 / 结构止损 ----------
+     P2修复（code review 2026-07）：算法只是回看窗口内的Math.min(low)，没有左右
+     侧K线确认、没有Pivot有效期、没有跌破失效判断，因此不是真正的"Pivot Low/
+     摆动低点"（那需要左右两侧都有更高的低点确认转折）。文案改为更准确的
+     "区间最低点"，避免暗示这里做了比实际更严谨的摆动结构分析；算法本身留待
+     后续版本再升级为真正的pivot检测。 */
   const lookback = pp.structureLookback;
   const recentBars = bars.slice(Math.max(0, bars.length-lookback-1), bars.length-1); // exclude today
   let structureStop = null, structureReason = '结构数据不足';
@@ -3934,7 +4230,7 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
     const swingLow = Math.min(...recentBars.map(b=>b.l));
     const buffer = atr!=null ? 0.25*atr : swingLow*0.005;
     structureStop = swingLow - buffer;
-    structureReason = `近${recentBars.length}个交易日（${profile==='short'?'短线':profile==='long'?'长线':'波段'}档位回看窗口）摆动低点为${swingLow.toFixed(2)}，扣除${atr!=null?'0.25×ATR':'0.5%'}缓冲(${buffer.toFixed(2)}) = ${structureStop.toFixed(2)}，用于过滤盘中假突破`;
+    structureReason = `近${recentBars.length}个交易日（${profile==='short'?'短线':profile==='long'?'长线':'波段'}档位回看窗口）区间最低点为${swingLow.toFixed(2)}（非严格意义上左右两侧确认的Pivot Low），扣除${atr!=null?'0.25×ATR':'0.5%'}缓冲(${buffer.toFixed(2)}) = ${structureStop.toFixed(2)}，用于过滤盘中假突破`;
   }
 
   /* ---------- LAYER 5: 动态锁利润 Profit Lock（基于R倍数） ---------- */
@@ -3994,19 +4290,44 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
   // against the last cached value too, so it truly never moves down.
   const prevEmergencyStop = (prevEntry && !prevEntry.insufficient && prevEntry.emergencyStop!=null)
     ? prevEntry.emergencyStop : null;
+  // BUGFIX (P0-1, code review 2026-07): the previous combination used
+  // Math.min(emergencyByPct, emergencyByAtr) to pick the "more conservative"
+  // floor, then only afterward raised it to group.initialEmergencyStop if
+  // that was higher. But emergencyByPct (cost-15%) is STATIC — cost never
+  // changes after entry — while emergencyByAtr only ever rises (it's already
+  // clamped to never move below its own previous value, see above). Once the
+  // ATR-derived floor climbed above cost-15%, Math.min kept selecting the
+  // static cost-15% value forever, so for the common single-lot case the
+  // "dynamic, only-rises" floor described in the comments never actually took
+  // effect — the operative Emergency Stop was silently capped at whatever it
+  // was worth on day one. Emergency Stop's entire purpose is to ratchet UP and
+  // lock in more of the position's gain as it advances, never to be capped
+  // back down to a value fixed at entry. The fix takes the MAX across every
+  // candidate floor instead — static cost-15%, ATR-derived (itself
+  // monotonic), and the entry-time-locked initial floor — so whichever is
+  // currently highest becomes the operative value. None of the three
+  // candidates ever decreases on their own, so the combined result is
+  // guaranteed non-decreasing too.
   const emergencyByAtr = (rawEmergencyByAtr!=null && prevEmergencyStop!=null)
     ? Math.max(rawEmergencyByAtr, prevEmergencyStop)
-    : rawEmergencyByAtr;
+    : (rawEmergencyByAtr!=null ? rawEmergencyByAtr : prevEmergencyStop);
   let emergencyStop = null, emergencyReason = '数据不足，无法计算紧急止损';
-  if(emergencyByPct!=null && emergencyByAtr!=null){
-    emergencyStop = Math.min(emergencyByPct, emergencyByAtr);
-    emergencyReason = `取"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})与"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})两者中更低者，作为不计较入场逻辑、任何情况下都必须离场的最终防线（锚定最高收盘价且与上次已锁定值比较取更高者，只升不降）`;
-  } else if(emergencyByPct!=null){
-    emergencyStop = emergencyByPct;
-    emergencyReason = `ATR数据不足，采用"成本价-${(emergencyPct*100).toFixed(0)}%"(${emergencyByPct.toFixed(2)})作为紧急止损`;
-  } else if(emergencyByAtr!=null){
-    emergencyStop = emergencyByAtr;
-    emergencyReason = `缺少持仓成本数据，采用"持仓期最高收盘价-4×ATR"(${emergencyByAtr.toFixed(2)})作为紧急止损`;
+  {
+    const emergencyCandidates = [
+      { key:'pct', label:`成本价-${(emergencyPct*100).toFixed(0)}%`, value: emergencyByPct },
+      { key:'atr', label:'持仓期最高收盘价-4×ATR', value: emergencyByAtr },
+      { key:'initial', label:'建仓时锁定的初始灾难止损', value: group.initialEmergencyStop },
+    ].filter(c=>c.value!=null && isFinite(c.value));
+    if(emergencyCandidates.length){
+      emergencyCandidates.sort((a,b)=>b.value-a.value);
+      const winner = emergencyCandidates[0];
+      emergencyStop = winner.value;
+      if(emergencyCandidates.length>1){
+        emergencyReason = `取${emergencyCandidates.map(c=>`"${c.label}"(${c.value.toFixed(2)})`).join('、')}中最高者，作为不计较入场逻辑、任何情况下都必须离场的最终防线（只升不降）`;
+      } else {
+        emergencyReason = `仅"${winner.label}"(${winner.value.toFixed(2)})可用，作为紧急止损`;
+      }
+    }
   }
 
   /* ---------- 综合：主止损 / 次级止损 / 紧急止损 三档 ---------- */
@@ -4016,12 +4337,23 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
   const candidates = [
     { key:'atr', label:'ATR跟踪止损', value: atrTrailingStop },
     { key:'trend', label:'趋势止损(EMA)', value: trendStop },
-    { key:'structure', label:'结构止损(摆动低点)', value: structureStop },
+    { key:'structure', label:'结构止损(区间最低点)', value: structureStop },
     { key:'profitLock', label:'利润锁定', value: profitLockStop },
   ].filter(c=>c.value!=null && isFinite(c.value) && pp.eligibleKeys.includes(c.key));
 
   const validBelow = candidates.filter(c=>c.value < price).sort((a,b)=>b.value-a.value);
   const breachedLayers = candidates.filter(c=>c.value >= price);
+
+  // BUGFIX: "利润锁定"这一层的本质是保护已实现的浮盈，不是"这笔交易还能承受多少
+  // 下行风险"。但它跟ATR/结构/趋势止损放在同一个候选池里排序时，波段档位下如果
+  // 利润锁定恰好是离现价最近的一档，会被选为primary——这本身用于止损表格显示没
+  // 问题，但风险预算(Risk Budget)如果直接拿primary当"下行风险基准"，算出来的就是
+  // "利润回吐空间"而不是"真实亏损风险"，会系统性低估风险。hardStop专门排除利润
+  // 锁定，是"这笔仓位如果趋势彻底走坏，会亏到哪"的更真实基准，风险预算引擎必须用
+  // 这个字段而不是primary。
+  const hardStopCandidates = candidates.filter(c=>c.key!=='profitLock');
+  const hardStopValidBelow = hardStopCandidates.filter(c=>c.value < price).sort((a,b)=>b.value-a.value);
+  const hardStop = hardStopValidBelow[0] || null;
 
   const primary = validBelow[0] || null;
   let secondary = validBelow[1] || null;
@@ -4033,28 +4365,81 @@ function analyzeStopLevels(ticker, group, bars, prevEntry, stopProfile){
     secondary = remaining.find(c=>c.value < price) || remaining[0] || null;
   }
 
-  // Guarantee ordering: emergency stop must sit below both primary and secondary.
+  // BUGFIX: previously, if the risk-model-computed Emergency Stop happened to
+  // sit above Primary/Secondary (e.g. cost-15% is well above a tight ATR stop
+  // after a big rally), the code silently pulled emergencyStop DOWN to force
+  // a tidy "emergency < primary/secondary" display ordering. That's altering
+  // the actual output of the risk model just to make the table look orderly —
+  // exactly the kind of "system looks more confident than it really is"
+  // problem this project has tried to avoid elsewhere. Now the real computed
+  // value is kept as-is, and a conflict flag is raised instead so the person
+  // using this can see "these two layers disagree" rather than being shown a
+  // manufactured number with no real basis.
+  let emergencyHierarchyConflict = false;
   if(emergencyStop!=null){
     const ceilings = [primary?primary.value:null, secondary?secondary.value:null].filter(v=>v!=null);
-    if(ceilings.length>0){
-      const minCeiling = Math.min(...ceilings);
-      if(emergencyStop >= minCeiling){
-        emergencyStop = minCeiling - (atr!=null ? 0.5*atr : minCeiling*0.02);
-        emergencyReason += `；已下调以确保低于主/次级止损位`;
-      }
+    if(ceilings.length>0 && emergencyStop >= Math.min(...ceilings)){
+      emergencyHierarchyConflict = true;
+      emergencyReason += `；⚠ 该数值高于主/次级止损位，说明"成本-15%"或"ATR灾难线"本身已经比日常止损更宽松（常见于大幅盈利后的持仓），这是层级冲突提示，不代表计算有误，也不会被自动调整`;
     }
   }
 
+  // ================================================================
+  // V1.1 — Exit Engine 四路拆分
+  // 不再让 ATR/结构/趋势/利润锁定 四个性质不同的层挤在一个"Primary"里排序选最高。
+  // 拆成四个各自独立、职责单一的角色：
+  //   hardStop    —— 真实下行风险线（排除利润锁定），风险预算/组合风险/矛盾检测的
+  //                   结构破位判断专用这个字段
+  //   trendExit   —— EMA趋势止损，state仅两态(normal/exit)，用于"趋势层面要不要减仓"
+  //                   的参考，不是必须执行的硬止损
+  //   profitStop  —— 利润锁定，只有已启用(active)时才有意义，用于保护浮盈
+  //   emergencyStop —— 已有的紧急止损（含建仓锁定值+层级冲突标记），原样纳入
+  // primary/secondary 保留作兼容字段（老代码/未迁移的调用点不会报错），但新逻辑
+  // 一律通过 exitState 读取，不再依赖 primary 的模糊语义。
+  // ================================================================
+  const exitState = {
+    hardStop: hardStop ? {
+      value: hardStop.value, source: hardStop.label,
+      reason: hardStop.key==='atr' ? atrReason : hardStop.key==='structure' ? structureReason : hardStop.key==='trend' ? trendReason : '',
+      breached: price!=null && hardStop.value!=null && price<=hardStop.value
+    } : {
+      value: null, source: null,
+      reason: hardStopCandidates.length>0 ? '当前策略档位下，所有硬止损候选层均已被现价击穿' : '数据不足，无有效硬止损候选',
+      breached: hardStopCandidates.length>0 && hardStopCandidates.every(c=>c.value>=price)
+    },
+    trendExit: {
+      value: trendStop, source: 'EMA趋势止损', reason: trendReason,
+      // 仅二态：normal(现价在趋势止损之上) / exit(已跌破)。更细的"盘中预警/收盘
+      // 确认/连续两日"状态机需要跨日跟踪状态，属于更大的工程，此版本先不做，
+      // 但字段名和二态设计好以后可以直接扩展成四态，不需要改调用方接口。
+      state: (trendStop!=null && price!=null && price<=trendStop) ? 'exit' : 'normal'
+    },
+    profitStop: {
+      value: profitLockStop, source:'利润锁定', reason: profitLockReason,
+      active: profitLockStop!=null // 只有达到≥1R盈利门槛才会启用，见上方profitLockReason的判断
+    },
+    emergencyStop: {
+      value: emergencyStop, initialValue: group.initialEmergencyStop ?? null,
+      reason: emergencyReason, conflict: emergencyHierarchyConflict,
+      // P0-2: true per-lot dollar risk, see lotBasedEmergencyRisk() — do not
+      // approximate this as (price-emergencyStop)*totalQty, that reintroduces
+      // the same "one blended stop for every lot" error this field exists to
+      // fix.
+      lotRisk: lotBasedEmergencyRisk(group, price, emergencyStop)
+    }
+  };
+
   return {
     ticker, price, holdDays, rMultiple, avgCost: group.avgCost, qty: group.qty, profile,
+    lots: group.lots, initialEmergencyStop: group.initialEmergencyStop ?? null,
     weeklyVerdict, weeklyReason, curWEma10, curWEma20,
     atrTrailingStop, atrReason, atr,
     trendStop, trendReason, curEma20, curEma50,
     structureStop, structureReason,
     profitLockStop, profitLockReason,
     timeStopFlag, timeStopReason,
-    emergencyStop, emergencyReason,
-    primary, secondary, breachedLayers,
+    emergencyStop, emergencyReason, emergencyHierarchyConflict,
+    primary, secondary, hardStop, breachedLayers, exitState,
     barsDate: bars[bars.length-1].t.split('T')[0],
   };
 }
@@ -4135,7 +4520,7 @@ function renderStopEngineTable(){
   if(!body) return;
   const groups = getHeldPositionGroups();
   if(groups.length===0){
-    body.innerHTML = '<tr><td colspan="12" class="lang-en" style="padding:16px;">暂无持仓，请先在"持仓明细"中添加</td></tr>';
+    body.innerHTML = '<tr><td colspan="13" class="lang-en" style="padding:16px;">暂无持仓，请先在"持仓明细"中添加</td></tr>';
     return;
   }
   const rows = groups.map(g=>resolveLiveStopSelection(stopEngineCache[g.ticker]) || { ticker:g.ticker, notyet:true });
@@ -4177,11 +4562,11 @@ function renderStopEngineTable(){
   body.innerHTML = rows.map(s=>{
     if(s.notyet){
       return `<tr class="rowclick" onclick="computeStopEngine()"><td class="ticker sticky-col">${s.ticker}</td>
-        <td colspan="11" class="lang-en">尚未计算，点击上方"计算止损引擎"获取</td></tr>`;
+        <td colspan="12" class="lang-en">尚未计算，点击上方"计算止损引擎"获取</td></tr>`;
     }
     if(s.insufficient){
       return `<tr><td class="ticker sticky-col">${s.ticker}</td>
-        <td colspan="11" class="lang-en" style="color:var(--red);">历史数据不足（需≥30个交易日）或获取失败</td></tr>`;
+        <td colspan="12" class="lang-en" style="color:var(--red);">历史数据不足（需≥30个交易日）或获取失败</td></tr>`;
     }
     const wv = weeklyVerdictLabel(s.weeklyVerdict);
     const refPrice = s._displayPrice ?? s.price;
@@ -4197,18 +4582,19 @@ function renderStopEngineTable(){
       <td>${fmt$(refPrice)}${s._priceIsLive?'<span style="color:var(--green);font-size:10px;" title="实时报价">●实时</span>':'<span style="color:var(--muted);font-size:10px;" title="无实时报价，退回日线收盘价">●收盘</span>'}</td>
       <td>${s.holdDays!=null?s.holdDays+'天':'—'}</td>
       <td class="${s.rMultiple!=null?pclass(s.rMultiple):'neu'}">${s.rMultiple!=null?s.rMultiple.toFixed(1)+'R':'—'}</td>
-      <td>${s.primary?fmt$(s.primary.value):'<span style="color:var(--red);">已跌破</span>'}</td>
+      <td>${s.primary?fmt$(s.primary.value):'<span style="color:var(--red);">已跌破</span>'}${s.primary?`<span style="font-size:10px;margin-left:4px;padding:1px 5px;border-radius:4px;${s.primary.key==='profitLock'?'background:rgba(45,212,191,0.15);color:var(--accent);':'background:rgba(96,165,250,0.15);color:var(--accent2);'}" title="${s.primary.key==='profitLock'?'这是利润保护线，用于锁定浮盈，不代表结构/趋势失效':'这是真实的下行风险防线'}">${s.primary.key==='profitLock'?'利润保护':'硬止损'}</span>`:''}</td>
       <td class="${primaryDist!=null?(primaryDist<0?'neg':'pos'):'neu'}">${primaryDist!=null?primaryDist.toFixed(1)+'%':'—'}</td>
+      <td>${s.exitState&&s.exitState.hardStop&&s.exitState.hardStop.value!=null?fmt$(s.exitState.hardStop.value):'<span style="color:var(--red);">已全部跌破</span>'}</td>
       <td>${s.secondary?fmt$(s.secondary.value):'—'}</td>
       <td class="${secondaryDist!=null?(secondaryDist<0?'neg':'pos'):'neu'}">${secondaryDist!=null?secondaryDist.toFixed(1)+'%':'—'}</td>
-      <td>${s.emergencyStop!=null?fmt$(s.emergencyStop):'—'}</td>
+      <td>${s.emergencyStop!=null?fmt$(s.emergencyStop):'—'}${s.emergencyHierarchyConflict?'<span style="color:var(--amber);font-size:11px;" title="高于主/次级止损位，层级冲突提示，非计算错误">⚠层级冲突</span>':''}</td>
       <td class="${emergencyDist!=null?(emergencyDist<0?'neg':'pos'):'neu'}">${emergencyDist!=null?emergencyDist.toFixed(1)+'%':'—'}</td>
       <td style="color:${wv.color};font-family:var(--sans);font-size:12px;font-weight:600;">${wv.text}</td>
       <td style="font-family:var(--sans);font-size:12px;">${hint}</td>
     </tr>`;
     if(expandedStopTicker !== s.ticker) return rowHtml;
     const detailHtml = `
-    <tr class="detail-row"><td colspan="12">
+    <tr class="detail-row"><td colspan="13">
       <div class="dim-grid">
         <div class="dim"><div class="dim-head"><span>① 周线EMA10/20 大局</span><b style="color:${wv.color};">${wv.text}</b></div>
           <div class="metrics-line">${s.weeklyReason}</div></div>
@@ -4216,7 +4602,7 @@ function renderStopEngineTable(){
           <div class="metrics-line">${s.atrReason}</div></div>
         <div class="dim"><div class="dim-head"><span>③ EMA20/50趋势止损</span><b>${s.trendStop!=null?fmt$(s.trendStop):'—'}</b></div>
           <div class="metrics-line">${s.trendReason}</div></div>
-        <div class="dim"><div class="dim-head"><span>④ 摆动低点/结构止损</span><b>${s.structureStop!=null?fmt$(s.structureStop):'—'}</b></div>
+        <div class="dim"><div class="dim-head"><span>④ 区间最低点/结构止损</span><b>${s.structureStop!=null?fmt$(s.structureStop):'—'}</b></div>
           <div class="metrics-line">${s.structureReason}</div></div>
         <div class="dim"><div class="dim-head"><span>⑤ 动态锁利润</span><b>${s.profitLockStop!=null?fmt$(s.profitLockStop):'未启用'}</b></div>
           <div class="metrics-line">${s.profitLockReason}</div></div>
@@ -4224,7 +4610,10 @@ function renderStopEngineTable(){
           <div class="metrics-line">${s.timeStopReason}</div></div>
         <div class="dim" style="grid-column:1/-1;border-color:var(--red);">
           <div class="dim-head"><span>🚨 紧急止损 Emergency Stop</span><b style="color:var(--red);">${s.emergencyStop!=null?fmt$(s.emergencyStop):'—'}</b></div>
-          <div class="metrics-line">${s.emergencyReason}</div></div>
+          <div class="metrics-line">${s.emergencyReason}</div>
+          ${(s.lots && s.lots.length>1 && s.exitState?.emergencyStop?.lotRisk)?`
+          <div class="metrics-line" style="margin-top:4px;">分批次紧急止损风险（按各批次自身建仓保护线计算，非单一混合价）：合计${s.exitState.emergencyStop.lotRisk.totalRiskAmount!=null?fmt$(s.exitState.emergencyStop.lotRisk.totalRiskAmount):'未知'}${s.exitState.emergencyStop.lotRisk.hasUnknown?'（含缺失数据批次，实际风险不低于此数）':''} · ${s.exitState.emergencyStop.lotRisk.rows.length}批：${s.exitState.emergencyStop.lotRisk.rows.map(r=>`${r.qty}股@${r.stop!=null?fmt$(r.stop):'—'}`).join('、')}</div>
+          `:''}</div>
         ${s.breachedLayers.length>0?`
         <div class="dim" style="grid-column:1/-1;border-color:var(--amber);">
           <div class="dim-head"><span>⚠ 已跌破的止损层</span><b style="color:var(--amber);">${s.breachedLayers.length}层</b></div>
@@ -4502,6 +4891,7 @@ function renderPortfolioIntel(){
     flagsEl.innerHTML = '<div class="empty-state"><div class="big">🧭</div>暂无持仓可供分析<br><span class="lang-en">请先在"持仓明细"添加代码</span></div>';
     posHHIEl.innerHTML = ''; sectorHHIEl.innerHTML = '';
     try{ renderCapitalEfficiency(); }catch(e){}
+    try{ renderCorrelationClusters(); }catch(e){}
     try{ renderPortfolioTimelinePanel(); }catch(e){} // module⑩: timeline persists even with no current holdings
     return;
   }
@@ -4595,13 +4985,7 @@ function renderPortfolioIntel(){
     metaEl.textContent = '';
   } else {
     const vt = piCorrState.validTickers;
-    function corrColor(v){
-      if(v===null) return 'var(--panel2)';
-      if(v>0.7) return 'rgba(239,68,68,0.3)';
-      if(v>0.4) return 'rgba(245,158,11,0.25)';
-      if(v<-0.3) return 'rgba(34,197,94,0.2)';
-      return 'rgba(45,212,191,0.1)';
-    }
+    // corrColor() 现为模块级共用函数（见文件顶部），此处不再重复定义
     let html = `<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:12px;font-family:var(--mono);">`;
     html += `<tr><th style="padding:6px 10px;"></th>${vt.map(t=>`<th style="padding:6px 10px;color:var(--accent2);">${t}</th>`).join('')}</tr>`;
     vt.forEach(ta=>{
@@ -4629,6 +5013,7 @@ function renderPortfolioIntel(){
     ? '相关性最后计算: ' + new Date(piCorrState.ts).toLocaleString('zh-CN')
     : '尚未计算相关性';
   try{ renderCapitalEfficiency(); }catch(e){} // module⑨-C
+  try{ renderCorrelationClusters(); }catch(e){} // V1.1
   try{ renderPortfolioTimelinePanel(); }catch(e){} // module⑩: portfolio health timeline
 }
 
@@ -5082,6 +5467,9 @@ function openSettings(){
   document.getElementById('earningsAlertDays').value = settings.earningsAlertDays || 2;
   document.getElementById('apiEnv').value = settings.apiEnv;
   document.getElementById('benchmarkTicker').value = settings.benchmarkTicker;
+  document.getElementById('maxCorrelationClusterRiskPct').value = settings.maxCorrelationClusterRiskPct ?? 2.5;
+  document.getElementById('maxPositionRiskPct').value = settings.maxPositionRiskPct ?? 1;
+  document.getElementById('pyramidAddSizePct').value = settings.pyramidAddSizePct ?? 50;
   document.getElementById('maxPortfolioRiskPct').value = settings.maxPortfolioRiskPct ?? 6;
   document.getElementById('defaultStopProfile').value = settings.defaultStopProfile || 'swing';
   document.getElementById('slMethod').value = settings.slMethod;
@@ -5137,6 +5525,9 @@ async function saveSettings(){
   settings.earningsAlertDays = parseInt(document.getElementById('earningsAlertDays').value) || 2;
   settings.apiEnv = document.getElementById('apiEnv').value;
   settings.benchmarkTicker = document.getElementById('benchmarkTicker').value.trim().toUpperCase() || 'SPY';
+  settings.maxCorrelationClusterRiskPct = parseFloat(document.getElementById('maxCorrelationClusterRiskPct').value) || 2.5;
+  settings.maxPositionRiskPct = parseFloat(document.getElementById('maxPositionRiskPct').value) || 1;
+  settings.pyramidAddSizePct = parseFloat(document.getElementById('pyramidAddSizePct').value) || 50;
   settings.maxPortfolioRiskPct = parseFloat(document.getElementById('maxPortfolioRiskPct').value) || 6;
   settings.defaultStopProfile = document.getElementById('defaultStopProfile').value;
   settings.slMethod = document.getElementById('slMethod').value;
@@ -5232,6 +5623,42 @@ function setInitialRiskIfNeeded(p){
   if(p.initialRisk==null && p.stopLoss!=null && p.cost>p.stopLoss){
     p.initialRisk = parseFloat((p.cost - p.stopLoss).toFixed(4));
   }
+  // BUGFIX: previously the "emergency stop" ratchet only compared against
+  // whatever the stop engine last computed (prevEntry.emergencyStop) — meaning
+  // if someone didn't run the stop engine until well after entry, the ratchet
+  // had nothing genuine from entry time to anchor against. This locks a floor
+  // at position-creation time using the one component we CAN know synchronously
+  // without fetching bars (cost-15%); analyzeStopLevels() takes the max of this,
+  // the ATR-based component, and the previous ratcheted value, so a locked
+  // entry-time floor now genuinely participates in "only up, never down".
+  if(p.initialEmergencyStop==null && p.cost>0){
+    p.initialEmergencyStop = parseFloat((p.cost*0.85).toFixed(4));
+  }
+  // V1.1: 老持仓（fixed3及更早版本创建）没有exitPlan字段，这里补上默认模板，
+  // 不会覆盖已有的exitPlan（如果用户已经在用这个版本调整过档位）。
+  if(!p.exitPlan){
+    p.exitPlan = {
+      tp1: { enabled:true, targetR:2, qtyPct:25, executed:false, executedQty:0, executedPrice:null, executedAt:null },
+      tp2: { enabled:true, targetR:3, qtyPct:25, executed:false, executedQty:0, executedPrice:null, executedAt:null },
+      runner: { qtyPct:50, method:'atr_trailing', plannedQty:null, remainingQty:null, activated:false, activatedAt:null, atrMultiple:2.5, currentStop:null, exited:false, exitPrice:null, exitAt:null }
+    };
+  }
+  migratePositionOriginalQty(p);
+}
+// BUGFIX (P1-2, code review 2026-07): TP1/TP2 qtyPct must be applied against
+// the lot's ORIGINAL share count at the time the exit plan was made, not
+// against whatever qty happens to remain after earlier TP stages already sold
+// part of it — otherwise "TP1 25% / TP2 25% / Runner 50%" silently becomes
+// TP1 25%, TP2 25% of the remaining 75% (=18.75% of original), Runner 56.25%,
+// because each stage's percentage compounds on a shrinking base. originalQty
+// is captured once, the first time we see this lot without one, and never
+// changes afterward — same "capture once, stays fixed" pattern already used
+// for initialRisk/initialEmergencyStop above.
+function migratePositionOriginalQty(p){
+  if(p.originalQty!=null) return;
+  const tp1Qty = (p.exitPlan && p.exitPlan.tp1 && p.exitPlan.tp1.executedQty) || 0;
+  const tp2Qty = (p.exitPlan && p.exitPlan.tp2 && p.exitPlan.tp2.executedQty) || 0;
+  p.originalQty = p.qty + tp1Qty + tp2Qty;
 }
 function resetInitialRisk(id){
   const p = positions.find(p=>p.id===id);
@@ -5246,6 +5673,15 @@ function resetInitialRisk(id){
     ? `确定要重置 ${p.ticker} 的R倍数基准吗？\n\n当前基准：每股风险 ${fmt$(oldRisk)}\n重置后：每股风险 ${fmt$(newRisk)}\n\n⚠️ 这会改变这笔仓位"1R"的定义——历史上已经计算过的R倍数（比如止损引擎、AI决策理由里引用的数值）会跟着改变口径，过去的3R可能变成8R，无法再与其他交易做统一的胜率/期望值比较。\n\n仅在最初录入止损价有误、需要修正时使用，不要在盈利后为了"看起来R倍数更好看"而重置。`
     : `确定要为 ${p.ticker} 设置R倍数基准吗？\n\n每股风险将设为 ${fmt$(newRisk)}（成本价 - 当前止损价）\n此后除非再次手动重置，该数值将永久作为这笔仓位"1R"的定义。`;
   if(!confirm(warnMsg)) return;
+  // BUGFIX: previously overwrote initialRisk with no record of what changed or
+  // why — meaning a later look-back at this position's history had no way to
+  // tell "was this always 1R = $X" from "someone corrected it on such-and-such
+  // date, for such-and-such reason". A brief reason is now required and kept
+  // as a simple audit trail on the lot itself.
+  const reason = prompt(`请简要说明修改原因（例如"最初止损价录入错误"）：`, '');
+  if(reason==null) return; // user cancelled the reason prompt — abort the whole reset
+  if(!Array.isArray(p.initialRiskAuditLog)) p.initialRiskAuditLog = [];
+  p.initialRiskAuditLog.push({ oldValue:oldRisk, newValue:newRisk, reason: reason||'（未填写原因）', timestamp: Date.now() });
   p.initialRisk = newRisk;
   saveState();
   renderPositions();
@@ -5317,8 +5753,81 @@ function computePositionStatus(ticker, lots, price, weight){
   if(reduceReasons.length>0){
     return { code:'reduce', ...POSITION_STATUS_META.reduce, reason:`${reduceReasons.join('·')} (${scoreTxt} · ${rTxt} · ${wTxt})` };
   }
+  // BUGFIX: previously "add" only checked composite score + R-multiple range —
+  // meaning a stock that had merely dipped a little (without breaking any real
+  // support) could get flagged "low-risk add zone" purely because price was
+  // near cost, which is exactly the "price fell = safer to add" trap this
+  // project has been warned against repeatedly. Now also requires: the hard
+  // stop hasn't been breached, the weekly trend isn't outright bearish, and
+  // the broader market regime isn't in a bear phase — add-worthy pullbacks
+  // should be confirmed dips within an intact uptrend, not just "not down too
+  // much yet".
+  // V1.1 Pyramid Engine 升级：在已有三道门槛(硬止损未破/周线未转弱/大盘非熊市)
+  // 基础上，再加两道——动量确认转强、单笔风险留有余地——避免"跌得不多+评分尚可"
+  // 就被当成加仓信号，却完全没看动量方向和风险占用是否已经很满。
   if(composite!=null && composite>=55 && rMultiple!=null && rMultiple<0.3 && rMultiple>=-0.5){
-    return { code:'add', ...POSITION_STATUS_META.add, reason:`${scoreTxt} · ${rTxt} — 回调至低风险加仓区间` };
+    const rawStopObj = stopEngineCache[ticker];
+    // BUGFIX (P0-3, code review 2026-07): resolve against the LIVE price so
+    // hardStopIntact reflects whether the hard stop is actually breached
+    // right now — the old check `stopObj.hardStop && stopObj.hardStop.value
+    // != null` only asked "does a hard-stop number exist", never "has price
+    // fallen through it". A stock trading well below its hard stop could
+    // still show hardStopIntact === true as long as some number had been
+    // computed for hardStop at all.
+    const stopObj = resolveLiveStopSelection(rawStopObj);
+    const scoreObjForMomentum = stockScoreCache[ticker];
+    const regime = getMarketRegimeInfo();
+    // BUGFIX (P0-4, code review 2026-07): every gate below used to be written
+    // as `!stopObj || stopObj.insufficient || <condition>` — meaning "we have
+    // no data" and "we checked and it's fine" produced the exact same `true`.
+    // That is a fail-OPEN design: missing stop data, missing momentum data, or
+    // missing market-regime data all silently passed the gate and could still
+    // produce an "Add" signal. Exit protection and add-on permission must be
+    // fail-CLOSED — when a required input is missing, the correct output is
+    // "can't confirm", not "assume it's fine". If any required input is
+    // missing, we now return early with a neutral status instead of letting
+    // any gate default to true.
+    const dataComplete = !!stopObj && !stopObj.insufficient && !stopObj.notyet &&
+      stopObj.exitState && price!=null &&
+      !!scoreObjForMomentum && !scoreObjForMomentum.insufficient &&
+      !!regime;
+    if(!dataComplete){
+      return { code:'strongHold', ...POSITION_STATUS_META.strongHold,
+        reason:`${scoreTxt} · ${rTxt} · ${wTxt} · 加仓关键数据不足（止损引擎/动量评分/大盘状态/现价中至少一项缺失），按Fail-Closed原则暂不给出加仓信号` };
+    }
+    const hardStopIntact = stopObj.exitState.hardStop?.value != null &&
+      stopObj.exitState.hardStop.breached !== true &&
+      price > stopObj.exitState.hardStop.value;
+    const weeklyOk = stopObj.weeklyVerdict !== 'exit';
+    const marketOk = regime.regime !== 'BEAR';
+    const momentumOk = scoreObjForMomentum.momentumScore!=null && scoreObjForMomentum.momentumScore>=50;
+
+    // BUGFIX (P1-1, code review 2026-07): this used to check only the
+    // position's EXISTING risk against the per-position cap — answering "is
+    // the current position already over budget", not "would adding more push
+    // it over budget". This app has no separate "planned add order" entry, so
+    // we assume the add is settings.pyramidAddSizePct% of the current share
+    // count, bought near the live price, using the same hard-stop distance —
+    // and check the risk of (current position + that assumed add) against the
+    // cap, not just the current position alone.
+    let positionRiskOk = true, projectedRiskPct = 0, addSizePct = settings.pyramidAddSizePct ?? 50;
+    {
+      const { total } = piPositionWeights();
+      const accountEquity = total + (settings.cashBalance || 0);
+      const maxPositionRiskPct = settings.maxPositionRiskPct ?? 1;
+      const qty = lots.reduce((s,p)=>s+p.qty,0);
+      const hardStopValue = stopObj.exitState.hardStop.value;
+      const perShareRisk = Math.max(0, price - hardStopValue);
+      const addQty = qty * addSizePct / 100;
+      const projectedRiskAmount = perShareRisk * (qty + addQty);
+      projectedRiskPct = accountEquity>0 ? (projectedRiskAmount/accountEquity*100) : 0;
+      positionRiskOk = projectedRiskPct <= maxPositionRiskPct;
+    }
+    if(hardStopIntact && weeklyOk && marketOk && momentumOk && positionRiskOk){
+      return { code:'add', ...POSITION_STATUS_META.add, reason:`${scoreTxt} · ${rTxt} · 硬止损未破(现价${fmt$(price)}>${fmt$(stopObj.exitState.hardStop.value)}) · 周线未转弱 · 大盘非熊市 · 日线动量转强 · 假设加仓${addSizePct}%仓位后预计风险${projectedRiskPct.toFixed(2)}%未超单笔上限(${(settings.maxPositionRiskPct??1)}%) — 回调确认加仓候选（仍需人工核实结构与成交量，非自动加仓许可）` };
+    } else if(hardStopIntact && weeklyOk && marketOk && momentumOk && !positionRiskOk){
+      return { code:'strongHold', ...POSITION_STATUS_META.strongHold, reason:`${scoreTxt} · ${rTxt} · ${wTxt} · 假设加仓${addSizePct}%仓位后预计风险${projectedRiskPct.toFixed(2)}%将超过单笔风险上限(${(settings.maxPositionRiskPct??1)}%账户净值)，暂不建议加仓` };
+    }
   }
   return { code:'strongHold', ...POSITION_STATUS_META.strongHold, reason:`${scoreTxt} · ${rTxt} · ${wTxt}` };
 }
@@ -5396,15 +5905,23 @@ function computeConflictSignals(ticker, scoreObj, stopObj, hasScore, hasStop, st
     }
 
     // 3) 个股评分看多 vs 止损结构已破位 —— 评分与风控矛盾
+    // BUGFIX: previously checked stopObj.primary here — but primary can resolve
+    // to the profit-lock layer, so a position that merely gave back some gains
+    // (price dipped below its profit-lock level, still well above the real
+    // structural/ATR stop) would incorrectly read as "structure broken", firing
+    // a false high-severity conflict. hardStop specifically excludes profit-lock,
+    // so this now only fires on genuine downside-protection breaks.
     const scoreBull = scoreObj.composite>=65;
-    const structureBroken = !stopObj.primary || (stopObj.breachedLayers && stopObj.breachedLayers.length>=2);
+    const structureBroken = !stopObj.hardStop || (stopObj.breachedLayers && stopObj.breachedLayers.length>=2);
     if(scoreBull && structureBroken){
-      items.push({ level:'high', text:`个股综合评分${scoreObj.composite.toFixed(1)}显示看多，但止损引擎显示${!stopObj.primary?'全部技术止损候选已跌破':stopObj.breachedLayers.length+'层止损位已被现价击穿'}，评分与价格结构严重矛盾` });
+      items.push({ level:'high', text:`个股综合评分${scoreObj.composite.toFixed(1)}显示看多，但止损引擎显示${!stopObj.hardStop?'全部技术止损候选已跌破':stopObj.breachedLayers.length+'层止损位已被现价击穿'}，评分与价格结构严重矛盾` });
     }
 
-    // 4) 仓位状态"强势持有" vs 现价已跌破主止损 —— 模块②/④判定不一致
-    if(status && status.code==='strongHold' && stopObj.primary && price!=null && price<=stopObj.primary.value){
-      items.push({ level:'high', text:`仓位状态判定为"强势持有"，但现价${fmt$(price)}已跌破止损引擎主止损位${fmt$(stopObj.primary.value)}，两个模块的判定口径不一致` });
+    // 4) 仓位状态"强势持有" vs 现价已跌破硬止损 —— 模块②/④判定不一致
+    // 同样改用hardStop：跌破利润锁定线不构成"强势持有 vs 风控"的真实矛盾，
+    // 只有跌破真正的下行风险防线才算。
+    if(status && status.code==='strongHold' && stopObj.hardStop && price!=null && price<=stopObj.hardStop.value){
+      items.push({ level:'high', text:`仓位状态判定为"强势持有"，但现价${fmt$(price)}已跌破止损引擎硬止损位${fmt$(stopObj.hardStop.value)}，两个模块的判定口径不一致` });
     }
   } else if(hasScore || hasStop){
     items.push({ level:'low', text:`①个股评分与④止损引擎仅完成其一（${hasScore?'评分已算':'止损已算'}），暂无法做多周期交叉验证` });
@@ -5514,16 +6031,17 @@ function computeAIDecision(ticker){
     reasons.push('【④ 止损引擎】尚未计算，请先在"风险指标"页签点击"计算止损引擎"');
   }
 
-  // R4 — module④ 主止损距离
+  // R4 — module④ 最近有效保护线距离（P1-6：不再称"主止损"，避免被误读为
+  // 必须执行的止损基准——它可能是利润锁定线；真正的风险基准是下面的④硬止损）
   let primaryBreached = false;
   if(hasStop){
     if(stopObj.primary){
       const distPct = price!=null ? (price-stopObj.primary.value)/price*100 : null;
-      reasons.push(`【④ 主止损】${stopObj.primary.label} = ${fmt$(stopObj.primary.value)}，距现价${fmt$(price)} ${distPct!=null?distPct.toFixed(1)+'%':'—'}`);
+      reasons.push(`【④ 最近有效保护线】${stopObj.primary.label} = ${fmt$(stopObj.primary.value)}，距现价${fmt$(price)} ${distPct!=null?distPct.toFixed(1)+'%':'—'}${stopObj.primary.key==='profitLock'?'（提示：当前最近的这一档是利润锁定线，用于保护已实现浮盈，不代表结构/趋势失效——真正的下行风险防线见④硬止损）':''}`);
       confidence += 10;
     } else {
       primaryBreached = true;
-      reasons.push('【④ 主止损】五层技术止损候选已全部高于现价（全部跌破），保护性止损已失效');
+      reasons.push('【④ 最近有效保护线】五层技术止损候选已全部高于现价（全部跌破），保护性止损已失效');
     }
     if(stopObj.breachedLayers && stopObj.breachedLayers.length>0){
       reasons.push(`【④ 警示】${stopObj.breachedLayers.map(l=>l.label+' '+fmt$(l.value)).join('、')} 已被现价${fmt$(price)}击穿`);
@@ -5722,11 +6240,12 @@ function decisionHistoryTimelineHtml(ticker){
 }
 
 /* ================================================================
-   MODULE ⑨-B — Risk Budget (v2_09)
-   组合层面的"风险预算使用率"：不是仓位市值占比，而是"这只票若跌到止损位
-   实际会亏多少钱"占组合总市值的比例。完全复用④止损引擎(stopEngineCache)
-   算出的主止损位 + positions/quoteCache 的持仓与现价，不重新抓取或重新
-   计算任何底层指标。
+   MODULE ⑨-B — Risk Budget (v2_09, updated v2_10_1)
+   组合层面的"风险预算使用率"：不是仓位市值占比，而是"这只票若跌到硬止损位
+   实际会亏多少钱"占风险预算上限（账户净值×maxPortfolioRiskPct%）的比例。
+   硬止损(hardStop)已排除利润锁定层，不会把浮盈保护线误当成亏损风险。
+   完全复用④止损引擎(stopEngineCache) + positions/quoteCache 的持仓与现价，
+   不重新抓取或重新计算任何底层指标。
    ================================================================ */
 function computeRiskBudget(){
   const { tickers, mv, total } = piPositionWeights();
@@ -5739,9 +6258,14 @@ function computeRiskBudget(){
     const stop = resolveLiveStopSelection(stopEngineCache[t]);
     const price = q ? q.price : (stop && stop.price!=null ? stop.price : (lots[0]?lots[0].cost:null));
     let stopBasis = null, source = null, riskAmount = null;
-    if(stop && !stop.insufficient && stop.primary && stop.primary.value!=null && price!=null){
-      stopBasis = stop.primary.value;
-      source = '④主止损 ' + stop.primary.label;
+    // BUGFIX: previously used stop.primary — but "primary" can resolve to the
+    // profit-lock layer (e.g. swing profile's eligible set includes it), which
+    // protects realized gains rather than defining "how much could this trade
+    // actually lose". Using that as the risk-budget basis systematically
+    // understated real downside risk. hardStop explicitly excludes profit-lock.
+    if(stop && !stop.insufficient && stop.hardStop && stop.hardStop.value!=null && price!=null){
+      stopBasis = stop.hardStop.value;
+      source = '④硬止损 ' + stop.hardStop.label;
       riskAmount = Math.max(0, (price - stopBasis)) * qty;
     } else {
       const manualStop = lots.find(p=>p.stopLoss!=null)?.stopLoss;
@@ -5757,20 +6281,27 @@ function computeRiskBudget(){
       riskPctOfTotal: riskAmount!=null ? riskAmount/total*100 : null
     };
   });
-  const usedPct = total>0 ? (usedRisk/total*100) : 0; // 已用风险占组合总值%（次要参考指标）
+  const usedPct = total>0 ? (usedRisk/total*100) : 0; // 已用风险占持仓市值%（次要参考指标）
   // BUGFIX: previously framed the entire portfolio value as the "100%" budget
   // denominator, so "used 4%, remaining 96%" made it look like there was huge
   // spare capacity when a professional risk budget would already be flagging
   // concern. Now benchmarks against a configurable ceiling (settings.
   // maxPortfolioRiskPct, default 6% of account equity — a common institutional
   // range is 3-8%), matching how real risk budgets are actually framed.
+  // BUGFIX #2: the ceiling must be based on total ACCOUNT EQUITY (positions +
+  // cash), not just invested position market value — someone sitting on a lot
+  // of cash would otherwise see their risk budget artificially shrink (and
+  // someone with margin/negative cash would see it artificially inflate),
+  // even though neither actually changes how much of the real account they're
+  // risking.
+  const accountEquity = total + (settings.cashBalance || 0);
   const riskBudgetPct = settings.maxPortfolioRiskPct ?? 6;
-  const riskBudgetAmount = total * riskBudgetPct / 100;
+  const riskBudgetAmount = accountEquity * riskBudgetPct / 100;
   const utilizationPct = riskBudgetAmount>0 ? (usedRisk/riskBudgetAmount*100) : 0;
   const remainingRiskAmount = Math.max(0, riskBudgetAmount - usedRisk);
   return {
     rows: rows.sort((a,b)=>(b.riskPctOfTotal??-1)-(a.riskPctOfTotal??-1)),
-    usedRisk, usedPct, total, unknownCount,
+    usedRisk, usedPct, total, accountEquity, unknownCount,
     riskBudgetPct, riskBudgetAmount, utilizationPct, remainingRiskAmount,
     remainingPct: Math.max(0, 100-utilizationPct), // 保留字段名以兼容既有调用，含义现在是"预算剩余使用率%"
   };
@@ -5829,10 +6360,14 @@ function previewRiskBudget(){
   const { total } = piPositionWeights();
   const rb = computeRiskBudget();
   const newRisk = (entry-stop)*qty;
-  const newCost = entry*qty;
-  const newTotal = total + newCost; // approximate post-trade portfolio value
+  // BUGFIX: account equity (positions + cash) doesn't change just from buying
+  // a stock with cash on hand — it only shifts value from the cash bucket to
+  // the position bucket. Using total+newCost here would have double-counted
+  // the cash that's about to be spent. The risk-budget denominator should be
+  // today's account equity, independent of whether this specific trade happens.
+  const accountEquity = total + (settings.cashBalance || 0);
   const riskBudgetPct = settings.maxPortfolioRiskPct ?? 6;
-  const riskBudgetAmount = newTotal * riskBudgetPct / 100;
+  const riskBudgetAmount = accountEquity * riskBudgetPct / 100;
   const existingUsedRisk = rb ? rb.usedRisk : 0;
   const combinedUsedRisk = existingUsedRisk + newRisk;
   const combinedUtilizationPct = riskBudgetAmount>0 ? (combinedUsedRisk/riskBudgetAmount*100) : null;
@@ -6313,6 +6848,29 @@ function addPosition(){
     slOverride: false,
     calcParams: null,
     initialRisk: null, // R-Multiple baseline, set once a stop-loss exists (see setInitialRiskIfNeeded)
+    initialEmergencyStop: null,
+    // P1-2 fix: TP1/TP2 qtyPct is always applied against this fixed value, never
+    // against the shrinking p.qty after earlier TP stages execute. See
+    // migratePositionOriginalQty() for how existing lots without this field
+    // are backfilled.
+    originalQty: qty,
+    // V1.1: 分批止盈计划。价格不存字段里，而是每次显示时用 cost + targetR*initialRisk
+    // 动态算（initialRisk一旦建立就不变，价格永远反映当下最新的R倍数目标，不会因为
+    // 后来调整止损而跟着漂移）。
+    exitPlan: {
+      tp1: { enabled:true, targetR:2, qtyPct:25, executed:false, executedQty:0, executedPrice:null, executedAt:null },
+      tp2: { enabled:true, targetR:3, qtyPct:25, executed:false, executedQty:0, executedPrice:null, executedAt:null },
+      // P1-3 fix: Runner used to be nothing but a display note ({qtyPct,
+      // method}) — no actual state was tracked, so the UI text "Runner持仓X股,
+      // 止损跟随ATR" was aspirational, not something the app ever computed or
+      // stored. These extra fields turn it into a real state machine: plannedQty
+      // is set once TP1/TP2 status is known (see runnerPlannedQty()), activated
+      // flips true the first time both TP stages are done (or disabled) and the
+      // remainder is genuinely "running" on the trailing stop, currentStop
+      // mirrors the ATR trailing stop at the time it was last checked, and
+      // exited/exitPrice/exitAt record how the runner leg itself eventually closed.
+      runner: { qtyPct:50, method:'atr_trailing', plannedQty:null, remainingQty:null, activated:false, activatedAt:null, atrMultiple:2.5, currentStop:null, exited:false, exitPrice:null, exitAt:null }
+    },
     sortOrder: Date.now(),
     addedAt: Date.now()
   };
@@ -6569,9 +7127,47 @@ function removePosition(id){
 
 function cancelClosePosition(){
   pendingCloseId = null;
+  pendingTpStage = null;
   document.getElementById('closeModal').classList.remove('show');
 }
 
+// BUGFIX (P1-3, code review 2026-07): Runner used to be a static plan object
+// ({qtyPct, method}) with no actual execution state — the UI described what
+// *should* happen ("剩余仓位按50%规划，止损跟随ATR自动移动") without the app
+// ever recording whether that had actually started, how many shares it
+// covers, or how it eventually closed. This turns it into a real state
+// machine, advanced every time a sale happens on this lot:
+//   - once both TP1 and TP2 are done (executed, or disabled so they don't
+//     apply), the runner is "activated": plannedQty is fixed at that moment
+//     (runner.qtyPct% of originalQty) and remainingQty starts tracking what's
+//     actually left;
+//   - every subsequent partial sale on this lot after that point keeps
+//     remainingQty in sync with the real p.qty;
+//   - a full close while the runner was active/pending is recorded as the
+//     runner's own exit (price + timestamp), so the exit plan snapshot saved
+//     to closedTrades (see P1-4 below) shows how the runner leg actually ended,
+//     not just the original plan.
+function advanceRunnerState(p, isFullClose, sellPrice){
+  const runner = p.exitPlan && p.exitPlan.runner;
+  if(!runner) return;
+  const tp1 = p.exitPlan.tp1, tp2 = p.exitPlan.tp2;
+  const tp1Done = !tp1 || !tp1.enabled || tp1.executed;
+  const tp2Done = !tp2 || !tp2.enabled || tp2.executed;
+  if(!runner.activated && tp1Done && tp2Done){
+    runner.activated = true;
+    runner.activatedAt = Date.now();
+    runner.plannedQty = (p.originalQty ?? p.qty) * (runner.qtyPct/100);
+    runner.remainingQty = p.qty;
+  } else if(runner.activated && !runner.exited){
+    runner.remainingQty = p.qty;
+  }
+  if(isFullClose && !runner.exited && (runner.activated || (tp1Done && tp2Done))){
+    runner.exited = true;
+    runner.exitPrice = sellPrice;
+    runner.exitAt = Date.now();
+    runner.remainingQty = 0;
+  }
+}
 function confirmClosePosition(){
   if(!pendingCloseId) return;
   const p = positions.find(p=>p.id===pendingCloseId);
@@ -6597,16 +7193,44 @@ function confirmClosePosition(){
     holdDays = Math.max(0, Math.round((sell-buy)/(1000*60*60*24)));
   }
 
+  // V1.1: 如果这次平仓是TP1/TP2触发的，把执行状态写回该批次的exitPlan —
+  // 必须在下面构造closedTrades快照之前完成，这样快照里的exitPlanSnapshot
+  // 才会包含这次执行的结果，而不是执行前的旧状态。
+  if(pendingTpStage && p.exitPlan && p.exitPlan[pendingTpStage]){
+    p.exitPlan[pendingTpStage].executed = true;
+    p.exitPlan[pendingTpStage].executedQty = sellQty;
+    p.exitPlan[pendingTpStage].executedPrice = sellPrice;
+    p.exitPlan[pendingTpStage].executedAt = Date.now();
+  }
+  // reduce remaining quantity on the same lot BEFORE computing Runner state /
+  // the closedTrades snapshot, so both reflect the post-sale qty.
+  if(isPartial) p.qty = p.qty - sellQty; else p.qty = 0;
+  advanceRunnerState(p, !isPartial, sellPrice);
+
+  // BUGFIX (P1-4, code review 2026-07): closedTrades used to save only the
+  // trade mechanics (qty/cost/sellPrice/dates/P&L) — none of the risk-audit
+  // fields on the position itself. For a full close, `positions` deletes the
+  // lot entirely right after this, so initialRisk, its audit log, the entry-
+  // time emergency floor, and the exit plan (TP1/TP2/Runner state) would just
+  // vanish with it — nothing left to look back on for that trade's risk
+  // history. Now snapshotted onto the closed-trade record, which is
+  // append-only and never deleted the way `positions` lots are.
+  const realizedR = (p.initialRisk!=null && p.initialRisk>0) ? (sellPrice - p.cost)/p.initialRisk : null;
+  const cloneSafe = (v)=>{ try{ return v==null ? v : JSON.parse(JSON.stringify(v)); }catch(e){ return null; } };
   closedTrades.unshift({
     ticker: p.ticker, qty: sellQty, cost: p.cost, sellPrice, buyDate: p.buyDate||null, sellDate,
     realizedPL, realizedPLPct, holdDays, note: p.note||'', closedAt: Date.now(),
-    partial: isPartial, commission
+    partial: isPartial, commission,
+    tpStage: pendingTpStage || null, // V1.1: 'tp1' | 'tp2' | null(手动平仓，非分批止盈计划触发)
+    initialRisk: p.initialRisk ?? null,
+    initialRiskAuditLog: cloneSafe(p.initialRiskAuditLog) || [],
+    initialEmergencyStop: p.initialEmergencyStop ?? null,
+    exitPlanSnapshot: cloneSafe(p.exitPlan),
+    realizedR
   });
   saveClosedTrades();
 
   if(isPartial){
-    // reduce remaining quantity on the same lot; cost basis stays the same (same batch)
-    p.qty = p.qty - sellQty;
     saveState();
   } else {
     positions = positions.filter(pos=>pos.id!==pendingCloseId);
@@ -6614,11 +7238,13 @@ function confirmClosePosition(){
   }
 
   pendingCloseId = null;
+  const tpStageLabel = pendingTpStage==='tp1'?'TP1止盈':(pendingTpStage==='tp2'?'TP2止盈':null);
+  pendingTpStage = null;
   document.getElementById('closeModal').classList.remove('show');
   document.getElementById('closeCommission').value = '';
   renderPositions();
   renderClosedTrades();
-  const closeLabel = isPartial ? `部分平仓 ${sellQty}股` : '已平仓';
+  const closeLabel = tpStageLabel ? `${tpStageLabel}（卖出${sellQty}股）` : (isPartial ? `部分平仓 ${sellQty}股` : '已平仓');
   const commNote = commission>0 ? ` (含佣金${fmt$(commission)})` : '';
   showToast(`${p.ticker} ${closeLabel}，净盈亏 ${fmt$(realizedPL)} (${fmtPct(realizedPLPct)})${commNote}`);
 }
@@ -6724,7 +7350,7 @@ function renderClosedTrades(){
 
   container.innerHTML = sorted.map(t=>`
     <tr>
-      <td class="sticky-col"><span class="ticker">${t.ticker}</span>${t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':''}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}</td>
+      <td class="sticky-col"><span class="ticker">${t.ticker}</span>${t.tpStage?`<span class="hint" style="color:var(--accent);"> ${t.tpStage==='tp1'?'TP1止盈':'TP2止盈'}</span>`:(t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':'')}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}</td>
       <td>${t.qty}</td>
       <td>${fmt$(t.cost)}</td>
       <td>${fmt$(t.sellPrice)}</td>
@@ -6846,7 +7472,7 @@ async function refreshAll(silent=false){
   document.getElementById('lastUpdated').textContent = '最后更新: ' + timeStr;
   if(document.getElementById('tab-allocation').style.display==='block') renderAllocation();
   if(document.getElementById('tab-risk').style.display==='block'){ try{ renderRiskBudget(); }catch(e){} }
-  if(document.getElementById('tab-portfolio').style.display==='block'){ try{ renderCapitalEfficiency(); }catch(e){} }
+  if(document.getElementById('tab-portfolio').style.display==='block'){ try{ renderCapitalEfficiency(); }catch(e){} try{ renderCorrelationClusters(); }catch(e){} }
   if(!silent) showToast('刷新完成 / Refresh complete');
   updateAutoRefreshStatus();
   // check Discord alerts after every refresh
@@ -6940,6 +7566,99 @@ function checkCircuitBreaker(currentValue){
 
 let expandedTickers = new Set();
 let expandedLotParams = new Set();
+let expandedExitPlan = new Set();
+function toggleExitPlanPanel(positionId){
+  if(expandedExitPlan.has(positionId)) expandedExitPlan.delete(positionId);
+  else expandedExitPlan.add(positionId);
+  renderPositions();
+}
+// V1.1: TP1/TP2/Runner 分批止盈。目标价按 cost + targetR*initialRisk 动态算，
+// 不落盘存价格本身（这样如果initialRisk因为修正录入而变化，目标价会自动跟着
+// 重算，不会停留在旧的错误基准上）。
+function tpTargetPrice(p, stage){
+  const cfg = p.exitPlan && p.exitPlan[stage];
+  if(!cfg || !cfg.enabled || p.initialRisk==null) return null;
+  return p.cost + cfg.targetR * p.initialRisk;
+}
+function renderExitPlanPanel(p){
+  const q = quoteCache[p.ticker];
+  const price = q ? q.price : null;
+  const ep = p.exitPlan || {};
+  const rows = ['tp1','tp2'].map(stage=>{
+    const cfg = ep[stage];
+    if(!cfg) return '';
+    const target = tpTargetPrice(p, stage);
+    const reached = target!=null && price!=null && price>=target;
+    // BUGFIX (P1-2): qtyPct is a percentage of the lot's ORIGINAL size
+    // (p.originalQty), not of whatever remains in p.qty right now — otherwise
+    // TP2's 25% is computed against the 75% left after TP1 already sold its
+    // 25%, silently shrinking every later stage. Capped at p.qty since we can
+    // never sell more than what's actually still held.
+    const qtyToSell = Math.min(p.qty, Math.floor((p.originalQty ?? p.qty) * (cfg.qtyPct/100) * 100) / 100); // 2位小数，避免碎股精度问题
+    return `
+      <div class="dim" style="margin-bottom:8px;">
+        <div class="dim-head">
+          <span>${stage==='tp1'?'① TP1':'② TP2'} · 目标${cfg.targetR}R · 卖出${cfg.qtyPct}%</span>
+          <b style="color:${cfg.executed?'var(--muted)':(reached?'var(--green)':'var(--text)')};">
+            ${target!=null?fmt$(target):'—'}${reached&&!cfg.executed?' ✅已到价':''}
+          </b>
+        </div>
+        <div class="metrics-line">
+          ${cfg.executed
+            ? `已执行：${cfg.executedQty}股 @ ${fmt$(cfg.executedPrice)}（${new Date(cfg.executedAt).toLocaleDateString('zh-CN')}）`
+            : (p.initialRisk==null ? '尚无R倍数基准（需先设置止损价），无法计算目标价'
+              : `预计卖出 ${qtyToSell} 股（当前持仓${cfg.qtyPct}%）`)}
+        </div>
+        ${!cfg.executed && p.initialRisk!=null ? `<button class="ghost small" style="margin-top:6px;" onclick="event.stopPropagation();executeTpStage('${p.id}','${stage}')">执行${stage==='tp1'?'TP1':'TP2'}部分止盈</button>` : ''}
+      </div>`;
+  }).join('');
+  const tp1Done = ep.tp1?.executed, tp2Done = ep.tp2?.executed;
+  // P1-3: Runner note now reflects the actual state machine (activated /
+  // remainingQty / exited) instead of only restating the static plan.
+  let runnerNote = '';
+  if(ep.runner){
+    const r = ep.runner;
+    const liveStopObj = resolveLiveStopSelection(stopEngineCache[p.ticker]);
+    const liveAtrStop = (liveStopObj && !liveStopObj.insufficient) ? liveStopObj.atrTrailingStop : null;
+    if(r.exited){
+      runnerNote = `Runner已离场：${fmt$(r.exitPrice)}（${r.exitAt?new Date(r.exitAt).toLocaleDateString('zh-CN'):'—'}）`;
+    } else if(r.activated){
+      runnerNote = `Runner已启动：计划${r.plannedQty!=null?r.plannedQty.toFixed(2):'—'}股，现存${r.remainingQty!=null?r.remainingQty:'—'}股，止损跟随④止损引擎的ATR跟踪止损（只升不降）${liveAtrStop!=null?`，当前${fmt$(liveAtrStop)}`:''}自动移动`;
+    } else {
+      runnerNote = `尚未启动：按计划占原始仓位${r.qtyPct}%，TP1/TP2均执行（或未启用）后自动启动`;
+    }
+  }
+  return `<tr class="detail-row"><td colspan="14">
+    <div class="dim-grid">
+      ${rows}
+      <div class="dim" style="grid-column:1/-1;">
+        <div class="dim-head"><span>③ Runner 剩余仓位</span></div>
+        <div class="metrics-line">${runnerNote}</div>
+      </div>
+    </div>
+  </td></tr>`;
+}
+// 执行TP：复用现有的closePosition部分平仓流程，只是预填数量+价格，并标记
+// 这次平仓对应哪个TP阶段，供confirmClosePosition()写入执行状态和历史记录。
+let pendingTpStage = null;
+function executeTpStage(positionId, stage){
+  const p = positions.find(x=>x.id===positionId);
+  if(!p) return;
+  const cfg = p.exitPlan && p.exitPlan[stage];
+  if(!cfg || cfg.executed) return;
+  const q = quoteCache[p.ticker];
+  const price = q ? q.price : null;
+  // BUGFIX (P1-2): same fix as renderExitPlanPanel — base on originalQty, not
+  // the current (possibly already-reduced) p.qty, and cap at what's left.
+  const qtyToSell = Math.min(p.qty, Math.floor((p.originalQty ?? p.qty) * (cfg.qtyPct/100) * 100) / 100);
+  if(qtyToSell<=0){ showToast('计算出的卖出数量为0，请检查持仓数量'); return; }
+  pendingTpStage = stage;
+  removePosition(positionId); // 复用现有平仓弹窗（打开后预填的是全部数量+现价）
+  // 覆盖成这次TP阶段该卖的数量和现价，其余弹窗行为（日期/佣金/确认）不变
+  document.getElementById('closeSellQty').value = qtyToSell;
+  if(price!=null) document.getElementById('closeSellPrice').value = price.toFixed(2);
+  document.getElementById('closeModalInfo').innerHTML += `<div class="hint" style="color:var(--accent);margin-top:4px;">📤 ${stage==='tp1'?'TP1':'TP2'}止盈执行 · 已按计划预填卖出数量，可按需调整</div>`;
+}
 let activeSort = { col: 'sortOrder', dir: 'asc' }; // current sort column & direction
 let activeFilters = []; // array of tag strings to filter by (empty = show all)
 let tickerSearchQuery = '';
@@ -7374,6 +8093,7 @@ function renderPositions(){
               <button class="icon-btn" onclick="event.stopPropagation();autoCalcSLTP('${p.id}')" style="color:var(--accent);" title="自动计算止损止盈">🎯</button>
               <button class="icon-btn" onclick="event.stopPropagation();setBreakEvenStop('${p.id}')" style="color:${pPrice!==null&&pPrice>p.cost?'var(--accent2)':'var(--muted)'};" title="设为保本止损（成本价）">🔒</button>
               <button class="icon-btn" onclick="event.stopPropagation();toggleLotParams('${p.id}')" style="color:${p.calcParams?'var(--accent2)':'var(--muted)'};">⏷</button>
+              <button class="icon-btn" onclick="event.stopPropagation();toggleExitPlanPanel('${p.id}')" style="color:${expandedExitPlan.has(p.id)?'var(--accent)':'var(--muted)'};" title="分批止盈计划 TP1/TP2/Runner">🎯📤</button>
               ${p.slOverride?`<button class="icon-btn" onclick="event.stopPropagation();resetLotToDefault('${p.id}')" style="color:var(--accent2);">↺</button>`:''}
               <button class="icon-btn" onclick="event.stopPropagation();openTagEditor('${p.id}')" style="color:var(--accent2);" title="编辑标签">🏷</button>
               <button class="icon-btn" onclick="event.stopPropagation();removePosition('${p.id}')" title="删除">✕</button>
@@ -7381,6 +8101,7 @@ function renderPositions(){
           </tr>
         `;
         if(expandedLotParams.has(p.id)) html += renderLotParamsPanel(p);
+        if(expandedExitPlan.has(p.id)) html += renderExitPlanPanel(p);
       });
     }
   });
@@ -8912,7 +9633,7 @@ function migrateAlertLogDedup(){
   const seen = new Map(); // ticker+type -> most recent entry
   alertLog.forEach(e=>{
     if(!e.dayKey){
-      const dateStr = new Date(e.ts).toISOString().split('T')[0];
+      const dateStr = dateStrNY(e.ts);
       e.dayKey = `${e.ticker}-${e.type}-${dateStr}`;
     }
     const groupKey = `${e.ticker}-${e.type}`; // collapse across all dates too — keep only latest overall
@@ -8965,7 +9686,7 @@ function processAlerts(triggered){
     const existIdx = alertLog.findIndex(e=>`${e.ticker}-${e.type}`===groupKey);
     const entry = { ticker:a.ticker, type:a.type, price:a.price, target:a.target, ts:Date.now(), dayKey:`${groupKey}-${today}` };
 
-    const isFirstToday = existIdx < 0 || (new Date(alertLog[existIdx].ts).toISOString().split('T')[0] !== today);
+    const isFirstToday = existIdx < 0 || (dateStrNY(alertLog[existIdx].ts) !== today);
     if(existIdx >= 0){
       alertLog[existIdx] = entry; // always update in place, never duplicate
     } else {
@@ -9102,12 +9823,17 @@ function renderPeriodPL(){
   }
 
   const sorted = [...navSnapshots].sort((a,b)=>a.date.localeCompare(b.date));
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  // BUGFIX: this local variable was shadowing the global todayStr() function
+  // (fixed earlier to use America/New_York) with its own fresh UTC-based
+  // computation — meaning "today's NAV snapshot" lookup could miss the actual
+  // snapshot recorded under the NY-timezone date during NY evening hours,
+  // even though the global todayStr() used to SAVE that snapshot was already
+  // correct. Now just calls the real function instead of recomputing.
+  const todayStr_ = todayStr();
 
   // Use the latest snapshot as "current" reference if quotes are stale (weekend/holiday)
   // If we have today's snapshot, current = that value; else use quoteCache-based value
-  const todaySnap = sorted.find(s=>s.date===todayStr);
+  const todaySnap = sorted.find(s=>s.date===todayStr_);
   const effectiveCurrent = todaySnap ? todaySnap.value : currentValue;
 
   // helper: latest snapshot STRICTLY before a date (excludes today's snapshot for "today" calc)
@@ -9123,10 +9849,10 @@ function renderPeriodPL(){
     return best;
   }
 
-  function fmtD(d){ return d.toISOString().split('T')[0]; }
+  function fmtD(d){ return dateStrNY(d); }
 
   // For "Today": compare effectiveCurrent vs the snapshot just before today's
-  const prevSnap = snapStrictBefore(todayStr);
+  const prevSnap = snapStrictBefore(todayStr_);
 
   // Week start: last Monday
   const weekStart = new Date(today);
@@ -10059,13 +10785,7 @@ async function computeCorrelation(){
     return cov/Math.sqrt(sa*sb);
   }
 
-  function corrColor(v){
-    if(v===null) return 'var(--panel2)';
-    if(v>0.7) return 'rgba(239,68,68,0.3)';
-    if(v>0.4) return 'rgba(245,158,11,0.25)';
-    if(v<-0.3) return 'rgba(34,197,94,0.2)';
-    return 'rgba(45,212,191,0.1)';
-  }
+  // corrColor() 现为模块级共用函数（见文件顶部），此处不再重复定义
 
   const el = document.getElementById('correlationMatrix');
   let html = `<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:12px;font-family:var(--mono);">`;
@@ -10746,7 +11466,7 @@ async function checkAddZoneAlerts(){
     const embed = {
       title: `📈 加仓提醒 ${ticker} — 已跌至目标价 ${fmt$(addZone)}`,
       color: 0x60a5fa,
-      description: `现价已到达你设定的加仓关注价位，可考虑是否加仓摊薄成本`,
+      description: `现价已到达你设定的加仓关注价位——仅代表进入观察区，是否加仓需结合个股评分/止损结构/大盘环境判断，不能仅因跌破成本而加仓`,
       fields: [
         { name:'📍 现价', value:`**${fmt$(q.price)}**`, inline:true },
         { name:'🎯 加仓目标价', value:fmt$(addZone), inline:true },
