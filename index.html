@@ -684,6 +684,15 @@
       </div>
     </div>
 
+    <!-- V1.6: Factor / Beta exposure -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title">
+        <span>因子/Beta敞口 / Factor &amp; Beta Exposure</span>
+        <span class="hint">Momentum直接复用①个股评分维度，Beta是评分计算时顺带算的，均为加权聚合；Value/Growth风格暴露本次未做（基本面数据源未接通）</span>
+      </div>
+      <div id="piFactorExposure"></div>
+    </div>
+
     <!-- Correlation Matrix -->
     <div class="panel">
       <div class="panel-title">
@@ -1580,6 +1589,11 @@
       <label>预设加仓规模 Assumed Pyramid Add Size (% of current qty)</label>
       <input id="pyramidAddSizePct" type="number" step="5" min="5" max="200">
       <div class="hint">P1修复：本系统没有独立的"计划加仓数量"录入，Pyramid Engine在判定加仓信号时，会假设加仓规模是现有持仓数量的这个百分比、以现价买入、沿用同一硬止损位，估算"加仓后风险"是否会超过单笔风险上限，而不是只看现有风险。默认50%（即加仓后总仓位=现有的1.5倍）。</div>
+    </div>
+    <div class="field">
+      <label>波动率目标法·目标单仓位年化波动贡献 Target Position Vol Contribution (%)</label>
+      <input id="targetPositionVolPct" type="number" step="0.5" min="0.5" max="20">
+      <div class="hint">V1.6仓位建议引擎"波动率目标法"用——建议仓位金额=账户净值×这个百分比÷该股年化波动率，让每笔新建仓位贡献的年化波动大致相当。默认2%是启发式经验值，不是精确标定，跟上面"单笔风险上限"是两个不同维度(一个看止损距离，一个看整体价格波动)，两种方法建议的股数经常不一样，仓位建议面板会把两者都列出来，不会只给一个数字。</div>
     </div>
     <div class="field">
       <label>组合风险预算上限 Max Portfolio Risk Budget (%)</label>
@@ -2901,6 +2915,7 @@ let settings = {
   cashBalance: 0,             // cash / buying power not invested in positions
   maxPositionRiskPct: 1, // 单笔风险上限（占账户净值%），Pyramid Engine加仓门槛用
   pyramidAddSizePct: 50, // P1修复：Pyramid Engine估算"加仓后风险"时假设的加仓规模（占现有持仓数量%）
+  targetPositionVolPct: 2, // V1.6仓位建议引擎"波动率目标法"：目标单仓位年化波动贡献（占账户净值%），启发式默认值
   maxCorrelationClusterRiskPct: 2.5, // 高相关簇风险上限（占账户净值%），代理版组合风险引擎用
   maxPortfolioRiskPct: 6, // 组合风险预算上限（占账户净值%），专业惯例通常3-8%，而非把总市值当100%基准
   defaultStopProfile:'swing',
@@ -3976,10 +3991,25 @@ function computeStockScore(ticker, bars, benchBars){
   const gapRisk = computeGapRisk(bars);
   const earningsDistance = earningsDistanceInfo(ticker);
 
+  // V1.6: Beta + 年化波动率——不新增数据获取，直接复用已经在手上的closes/benchBars
+  // 顺带算daily returns，跟"风险指标"页签单股扫描(scanSingleTicker)用的是同一套
+  // calcBeta()/dailyReturns()/stdev()。这里系统性地给"持仓+自选池"里每一只算过分
+  // 的票都顺带算一份，而不是像scanSingleTicker那样只在用户手动点单只票扫描时才有——
+  // 这样组合层面的Beta/动量敞口聚合(piFactorExposure)才有完整数据可用。
+  const rets = dailyReturns(closes);
+  let beta = null, annualizedVolPct = null;
+  if(rets.length>=30){
+    annualizedVolPct = stdev(rets)!=null ? stdev(rets)*Math.sqrt(252)*100 : null;
+    if(benchBars && benchBars.length>=30){
+      const benchRets = dailyReturns(closesOf(benchBars));
+      beta = calcBeta(rets, benchRets);
+    }
+  }
+
   return {
     ticker, barsDate, price, insufficient:false,
     trendScore, momentumScore, rsScore, volumeScore, volatilityScore, timingScore,
-    composite, grade, signal, patternSignals, gapRisk, earningsDistance,
+    composite, grade, signal, patternSignals, gapRisk, earningsDistance, beta, annualizedVolPct,
     metrics:{
       ma20:ma20L, ma50:ma50L, ma200: haveMa200?ma200L:null,
       rsi14:rsiL, roc1m, roc3m, rsRaw, atrPct:atrPctL, atrPctile,
@@ -4080,6 +4110,27 @@ async function recalcStockScores(){
     stockScoreCache[t] = b ? computeStockScore(t, b, benchBars) : { ticker:t, insufficient:true, error:true };
   });
   computeRsPercentiles(); // V1.5⑨: 依赖上面刚算完的"持仓+自选"完整池子分数
+
+  // V1.6: 入场快照补录——加仓/建仓时如果该票还没有评分(entrySnapshotPending=true)，
+  // 现在评分已经算出来了，这里补一张快照。如实记录距离实际买入日期过了多少天，
+  // 不假装这是"买入那一刻"的精确快照。只处理pending=true的lot，已经补录过的、
+  // 或者V1.6之前就存在的老持仓(entrySnapshotPending字段本身就是undefined)一律
+  // 不动——老持仓没有入场快照这件事本身如实反映"这个功能是V1.6才有的"，不去伪造
+  // 历史数据。
+  let entrySnapshotBackfilled = false;
+  positions.forEach(p=>{
+    if(!p.entrySnapshotPending) return;
+    const s = stockScoreCache[p.ticker];
+    if(!s || s.insufficient) return; // 这只票这次仍然没算出分数，继续保持pending，下次再试
+    p.entrySnapshot = buildEntryAttributionSnapshot(p.ticker);
+    p.entrySnapshotPending = false;
+    p.entrySnapshotCapturedAt = Date.now();
+    const buy = p.buyDate ? new Date(p.buyDate) : null;
+    p.entrySnapshotDelayDays = buy ? Math.max(0, Math.round((Date.now()-buy.getTime())/86400000)) : null;
+    entrySnapshotBackfilled = true;
+  });
+  if(entrySnapshotBackfilled) saveState(); // positions持久化在saveState()里，不是saveStockScores()
+
   stockLastCalcTs = Date.now();
   saveStockScores();
 
@@ -4229,6 +4280,18 @@ function renderStockTable(){
           return `<div class="dim"><div class="dim-head"><span>⑧ 财报距离 & 跳空风险</span></div>
             <div class="metrics-line">距下次财报：${edText}<br>历史隔夜跳空风险：<span style="color:${grColor};font-weight:600;">${grText}</span>
               <br><span class="lang-en" style="font-size:10px;">财报日期来自内置近似表(BUILTIN_EARNINGS)，手动维护，可能过期；跳空风险是历史统计，不是预测</span>
+            </div></div>`;
+        })()}
+        ${(()=>{
+          // V1.6: 仓位建议引擎——两种方法并列展示，不选一个当唯一答案
+          const sz = computeSuggestedPositionSize(s.ticker);
+          if(sz.insufficient) return `<div class="dim"><div class="dim-head"><span>⑨ 仓位建议 Position Sizing</span></div><div class="metrics-line neu">${sz.reason}</div></div>`;
+          const cmpTxt = sz.currentQty>0 ? `当前持有${sz.currentQty}股` : '当前未持有';
+          return `<div class="dim"><div class="dim-head"><span>⑨ 仓位建议 Position Sizing</span></div>
+            <div class="metrics-line">${cmpTxt}<br>
+              风险预算法：${sz.methodA?`${sz.methodA.shares}股(≈${fmt$(sz.methodA.dollarValue)}，${sz.methodA.pctOfEquity.toFixed(1)}%净值，止损${fmt$(sz.methodA.stopPrice)})`:'不可用'}<br>
+              波动率目标法：${sz.methodB?`${sz.methodB.shares}股(≈${fmt$(sz.methodB.dollarValue)}，${sz.methodB.pctOfEquity.toFixed(1)}%净值，年化波动${sz.methodB.annualizedVolPct.toFixed(1)}%)`:'不可用'}
+              <br><span class="lang-en" style="font-size:10px;">两种方法看的风险维度不同，经常给出不同股数，刻意都展示、不做"选一个"的简化；不做Kelly Fraction(样本量不足会给出伪精确的数字)</span>
             </div></div>`;
         })()}
       </div>
@@ -4967,6 +5030,33 @@ function piThemeWeights(weights){
   });
   return byTag;
 }
+/* ================================================================
+   FACTOR / BETA EXPOSURE (V1.6) —— 组合层面的Beta和动量风格暴露
+   Momentum直接复用①个股评分已有的momentumScore做加权聚合，零新数据。Beta是
+   computeStockScore()顺带算出来的(见该函数内注释)，这里只做加权聚合，同样不
+   重新拉取/计算任何底层数据。
+   明确不做：Value/Growth风格暴露——那需要接ROE/PE/EPS增长这类基本面数据，
+   代码里虽然已经有一套DS.getFundamentalsBundle()多数据源基本面抓取逻辑，但
+   从未被真正接通过(finnhubKey/fmpKey从未真正传进过配置对象cfg，调用会直接
+   拿到全空的bundle)——这是要打通一条全新数据链路的改动，本次不做。
+   ================================================================ */
+function piFactorExposure(weights){
+  let betaWSum=0, betaCoverW=0, momWSum=0, momCoverW=0;
+  const missingBeta=[], missingMomentum=[];
+  Object.entries(weights).forEach(([t,w])=>{
+    const s = stockScoreCache[t];
+    if(s && !s.insufficient && s.beta!=null){ betaWSum += s.beta*w; betaCoverW += w; }
+    else missingBeta.push(t);
+    if(s && !s.insufficient && s.momentumScore!=null){ momWSum += s.momentumScore*w; momCoverW += w; }
+    else missingMomentum.push(t);
+  });
+  return {
+    portfolioBeta: betaCoverW>0 ? betaWSum/betaCoverW : null,
+    betaCoveragePct: betaCoverW*100, missingBeta,
+    momentumExposure: momCoverW>0 ? momWSum/momCoverW : null,
+    momentumCoveragePct: momCoverW*100, missingMomentum
+  };
+}
 /* Normalized HHI: 0 = perfectly equal-weighted across n items, 1 = fully concentrated in one */
 function piHHI(weightArr){
   const n = weightArr.length;
@@ -5170,6 +5260,12 @@ function computePortfolioHealth(){
     ? parts.filter(p=>p.score!=null).reduce((s,p)=>s + p.score*(p.w/availW), 0)
     : null;
 
+  // V1.6: 因子/Beta敞口——只做展示，不并入上面的加权健康分公式。V1.5刚做过一次
+  // reweight(4项→7项)，已经导致"组合健康分历史时间线"出现一次跳变；短时间内再改
+  // 一次公式会让这条时间线更难解读，所以这次新增的维度先只作为独立信息展示，
+  // 观察一段时间、确认这两个维度确实值得纳入权重体系后，再考虑要不要正式并入。
+  const factorExposure = piFactorExposure(weights);
+
   return {
     tickers, weights, total,
     qualityScore, missingQuality,
@@ -5179,6 +5275,7 @@ function computePortfolioHealth(){
     heatPct: heatInfo.heatPct, heatScore, heatUnknownTickers: heatInfo.unknownTickers,
     cashPct: heatInfo.cashPct, cashScore,
     currentDrawdownPct, drawdownScore,
+    factorExposure,
     health, grade: health!=null ? stockGradeOf(health) : null
   };
 }
@@ -5250,6 +5347,19 @@ function piFlagsOf(intel){
       flags.push({ level:'warn', text:`⚠ ${soonList.length}只持仓将在5天内公布财报：${desc}，财报前后跳空风险较高，建议提前复核仓位规模/止损设置` });
     }
   }
+  // V1.6: 组合Beta提示——只读①个股评分里顺带算出的beta做加权聚合，不新增计算。
+  // 阈值(>1.3偏高/<0.7偏低)是启发式参考，不是严格标定。
+  if(intel.factorExposure && intel.factorExposure.portfolioBeta!=null){
+    const b = intel.factorExposure.portfolioBeta;
+    if(b>=1.3){
+      flags.push({ level:'warn', text:`⚠ 组合加权Beta ${b.toFixed(2)}，明显高于大盘，大盘下跌时组合可能跌得更多` });
+    } else if(b<=0.7){
+      flags.push({ level:'neu', text:`ℹ 组合加权Beta ${b.toFixed(2)}，明显低于大盘，跟大盘同步性较弱（不一定是坏事，取决于你的意图）` });
+    }
+  }
+  if(intel.factorExposure && intel.factorExposure.missingBeta && intel.factorExposure.missingBeta.length>0){
+    flags.push({ level:'neu', text:`ℹ ${intel.factorExposure.missingBeta.join('、')} 缺少Beta数据（需在"个股智能"重新计算），未计入组合Beta` });
+  }
   return flags;
 }
 
@@ -5261,6 +5371,7 @@ function renderPortfolioIntel(){
   const sectorHHIEl = document.getElementById('piSectorHHI');
   const industryEl = document.getElementById('piIndustryExposure');
   const themeEl = document.getElementById('piThemeExposure');
+  const factorExposureEl = document.getElementById('piFactorExposure');
   const corrEl = document.getElementById('piCorrMatrix');
   const metaEl = document.getElementById('piCorrMeta');
   if(!cardsEl) return;
@@ -5271,6 +5382,7 @@ function renderPortfolioIntel(){
     flagsEl.innerHTML = '<div class="empty-state"><div class="big">🧭</div>暂无持仓可供分析<br><span class="lang-en">请先在"持仓明细"添加代码</span></div>';
     posHHIEl.innerHTML = ''; sectorHHIEl.innerHTML = '';
     if(industryEl) industryEl.innerHTML = ''; if(themeEl) themeEl.innerHTML = '';
+    if(factorExposureEl) factorExposureEl.innerHTML = '';
     try{ renderCapitalEfficiency(); }catch(e){}
     try{ renderCorrelationClusters(); }catch(e){}
     try{ renderPortfolioTimelinePanel(); }catch(e){} // module⑩: timeline persists even with no current holdings
@@ -5398,6 +5510,40 @@ function renderPortfolioIntel(){
         <span style="min-width:48px;text-align:right;font-family:var(--mono);font-size:12px;">${(w*100).toFixed(1)}%</span>
       </div>
     `).join('') : '<div class="hint">暂无标签数据，可在持仓明细里给批次打标签</div>';
+  }
+
+  // V1.6: Factor/Beta exposure panel — Momentum直接复用①，Beta是评分计算时顺带算的，
+  // 都是加权聚合，不重新计算。
+  if(factorExposureEl){
+    const fe = intel.factorExposure;
+    const betaTxt = fe && fe.portfolioBeta!=null ? fe.portfolioBeta.toFixed(2) : '—';
+    const momTxt = fe && fe.momentumExposure!=null ? fe.momentumExposure.toFixed(1) : '—';
+    const perTicker = intel.tickers.map(t=>{
+      const s = stockScoreCache[t];
+      return { t, w: intel.weights[t], beta: (s && !s.insufficient) ? s.beta : null, mom: (s && !s.insufficient) ? s.momentumScore : null };
+    }).sort((a,b)=>b.w-a.w);
+    factorExposureEl.innerHTML = `
+      <div class="stat-grid" style="margin-bottom:12px;">
+        <div class="stat-card">
+          <div class="stat-label">组合加权Beta Portfolio Beta</div>
+          <div class="stat-value" style="color:${fe && fe.portfolioBeta!=null ? (fe.portfolioBeta>=1.3?'var(--red)':fe.portfolioBeta<=0.7?'var(--accent2)':'var(--green)') : 'var(--muted)'};">${betaTxt}</div>
+          <div class="stat-sub">${fe ? `覆盖${fe.betaCoveragePct.toFixed(0)}%持仓权重` : '—'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">动量敞口 Momentum Exposure</div>
+          <div class="stat-value" style="color:${fe && fe.momentumExposure!=null ? stockScoreColor(fe.momentumExposure) : 'var(--muted)'};">${momTxt}</div>
+          <div class="stat-sub">${fe ? `覆盖${fe.momentumCoveragePct.toFixed(0)}%持仓权重（0-100，复用①动量评分维度）` : '—'}</div>
+        </div>
+      </div>
+      ${perTicker.map(({t,w,beta,mom})=>`
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12px;">
+          <span class="ticker" style="min-width:52px;font-family:var(--mono);">${t}</span>
+          <span style="min-width:48px;color:var(--muted);">${(w*100).toFixed(1)}%</span>
+          <span style="min-width:90px;">Beta ${beta!=null?beta.toFixed(2):'—'}</span>
+          <span>动量 ${mom!=null?mom.toFixed(0):'—'}</span>
+        </div>
+      `).join('')}
+    `;
   }
 
   // Correlation matrix
@@ -5891,6 +6037,7 @@ function openSettings(){
   document.getElementById('maxCorrelationClusterRiskPct').value = settings.maxCorrelationClusterRiskPct ?? 2.5;
   document.getElementById('maxPositionRiskPct').value = settings.maxPositionRiskPct ?? 1;
   document.getElementById('pyramidAddSizePct').value = settings.pyramidAddSizePct ?? 50;
+  document.getElementById('targetPositionVolPct').value = settings.targetPositionVolPct ?? 2;
   document.getElementById('maxPortfolioRiskPct').value = settings.maxPortfolioRiskPct ?? 6;
   document.getElementById('defaultStopProfile').value = settings.defaultStopProfile || 'swing';
   document.getElementById('slMethod').value = settings.slMethod;
@@ -5949,6 +6096,7 @@ async function saveSettings(){
   settings.maxCorrelationClusterRiskPct = parseFloat(document.getElementById('maxCorrelationClusterRiskPct').value) || 2.5;
   settings.maxPositionRiskPct = parseFloat(document.getElementById('maxPositionRiskPct').value) || 1;
   settings.pyramidAddSizePct = parseFloat(document.getElementById('pyramidAddSizePct').value) || 50;
+  settings.targetPositionVolPct = parseFloat(document.getElementById('targetPositionVolPct').value) || 2;
   settings.maxPortfolioRiskPct = parseFloat(document.getElementById('maxPortfolioRiskPct').value) || 6;
   settings.defaultStopProfile = document.getElementById('defaultStopProfile').value;
   settings.slMethod = document.getElementById('slMethod').value;
@@ -6142,6 +6290,63 @@ function holdDaysCellHtml(holdDays){
   if(isLT) return `<span style="color:var(--green);font-size:12px;">🟢 长期</span><div class="ticker-note">${holdDays}天</div>`;
   if(daysToLT<=30) return `<span style="color:var(--amber);font-size:12px;">🟡 ${daysToLT}天转长期</span><div class="ticker-note">${holdDays}天 (短期)</div>`;
   return `<span style="color:var(--muted);font-size:12px;">短期</span><div class="ticker-note">${holdDays}天</div>`;
+}
+/* ================================================================
+   POSITION SIZING ENGINE (V1.6) —— 仓位建议：回答"应该买多少"，不只是"能不能买"。
+   两种方法并列展示，不做"选一个当唯一正确答案"的简化——两者看的是不同的风险维度，
+   经常会给出不一样的股数：
+   ①风险预算法(Risk Budget)：跟②Pyramid Engine同一套逻辑——账户净值×单笔风险
+     上限(settings.maxPositionRiskPct) ÷ 每股风险(现价-止损价)反推股数。止损价
+     优先用④止损引擎的硬止损，没有的话退回"现价-2倍ATR"做粗略估算(明确标注是
+     估算，不是引擎算出来的)。只看"到止损那段距离"，不管整体价格摆动有多大。
+   ②波动率目标法(Volatility Targeting)：账户净值×目标单仓位年化波动贡献
+     (settings.targetPositionVolPct) ÷ 该股年化波动率反推仓位金额。年化波动率
+     是①个股评分顺带算出来的(annualizedVolPct，见computeStockScore)，不新增
+     计算。看的是整体价格摆动幅度，不管止损设在哪——一个跳空缺口很大但止损设得
+     很紧的票，两个方法给出的建议可能差异很大，这正是把两者都摊开显示的原因。
+   不做Kelly Fraction——用几十笔交易的样本去估计单只股票的"edge"，算出来的仓位
+   建议是伪精确，输入是噪声，输出也是噪声，讨论后明确排除。
+   ================================================================ */
+function computeSuggestedPositionSize(ticker){
+  const q = quoteCache[ticker];
+  const price = q ? q.price : null;
+  const scoreObj = stockScoreCache[ticker];
+  if(price==null) return { insufficient:true, reason:'缺少现价（需先刷新报价）' };
+  if(!scoreObj || scoreObj.insufficient) return { insufficient:true, reason:'缺少个股评分数据（需先在"个股智能"重新计算，自选池代码也会一并算）' };
+
+  const { total } = piPositionWeights();
+  const accountEquity = total + (settings.cashBalance || 0);
+  if(accountEquity<=0) return { insufficient:true, reason:'账户净值为0（当前持仓市值+现金余额），请先在设置里填现金余额' };
+
+  const liveStop = resolveLiveStopSelection(stopEngineCache[ticker]);
+  const engineHardStop = (liveStop && !liveStop.insufficient && !liveStop.notyet) ? (liveStop.exitState?.hardStop?.value ?? null) : null;
+  let stopPrice = engineHardStop, stopSource = '④止损引擎硬止损';
+  if(stopPrice==null){
+    const atrPct = scoreObj.metrics?.atrPct;
+    if(atrPct!=null){ stopPrice = price*(1-2*atrPct/100); stopSource = '估算值：现价-2倍ATR%（④止损引擎未计算此票）'; }
+  }
+
+  let methodA = null;
+  if(stopPrice!=null && stopPrice<price){
+    const riskBudgetPct = settings.maxPositionRiskPct ?? 1;
+    const riskDollars = accountEquity * riskBudgetPct/100;
+    const perShareRisk = price - stopPrice;
+    const shares = Math.max(0, Math.floor(riskDollars/perShareRisk));
+    methodA = { shares, dollarValue: shares*price, pctOfEquity: accountEquity>0?(shares*price/accountEquity*100):0, stopPrice, stopSource, riskBudgetPct };
+  }
+
+  let methodB = null;
+  if(scoreObj.annualizedVolPct!=null && scoreObj.annualizedVolPct>0){
+    const targetVolPct = settings.targetPositionVolPct ?? 2;
+    const dollarValue = accountEquity * targetVolPct / scoreObj.annualizedVolPct;
+    const shares = Math.max(0, Math.floor(dollarValue/price));
+    methodB = { shares, dollarValue: shares*price, pctOfEquity: accountEquity>0?(shares*price/accountEquity*100):0, annualizedVolPct: scoreObj.annualizedVolPct, targetVolPct };
+  }
+
+  if(!methodA && !methodB) return { insufficient:true, reason:'止损价和年化波动率都无法算出，两种方法均不可用' };
+
+  const currentQty = positions.filter(p=>p.ticker===ticker).reduce((s,p)=>s+p.qty,0);
+  return { insufficient:false, price, accountEquity, currentQty, methodA, methodB };
 }
 // Position status: combines Stock Intelligence Engine composite score (if calculated),
 // R-Multiple, and position weight into one of 4 actionable labels. Falls back gracefully
@@ -7456,6 +7661,22 @@ function addPosition(){
     sortOrder: Date.now(),
     addedAt: Date.now()
   };
+  // V1.6: 入场快照——如果这只票已经有评分缓存(比如之前扫过/本来就在自选池里)，
+  // 现在就能拍一张准确的"入场那一刻"快照；更常见的情况是新代码还没算过分，这时
+  // 标记entrySnapshotPending，等下一次recalcStockScores()算完这只票的分数后
+  // 由那里补录(见该函数内的补录逻辑)，补录时会如实记录延迟了几天，不假装精确。
+  const entryScoreObj = stockScoreCache[ticker];
+  if(entryScoreObj && !entryScoreObj.insufficient){
+    newLot.entrySnapshot = buildEntryAttributionSnapshot(ticker);
+    newLot.entrySnapshotPending = false;
+    newLot.entrySnapshotCapturedAt = Date.now();
+    newLot.entrySnapshotDelayDays = 0;
+  } else {
+    newLot.entrySnapshot = null;
+    newLot.entrySnapshotPending = true;
+    newLot.entrySnapshotCapturedAt = null;
+    newLot.entrySnapshotDelayDays = null;
+  }
   setInitialRiskIfNeeded(newLot);
   positions.push(newLot);
   saveState();
@@ -7776,6 +7997,22 @@ function buildExitAttributionSnapshot(ticker){
     portfolioHealth: (health && health.health!=null) ? Math.round(health.health*10)/10 : null
   };
 }
+/* ================================================================
+   ENTRY ATTRIBUTION SNAPSHOT (V1.6) —— 入场快照
+   跟出场快照(buildExitAttributionSnapshot)对称——字段完全一样，方便日后直接做
+   "入场时vs出场时"的对比，不建两套不同的字段命名。区别在于捕获时机：
+   - 加仓/建仓那一刻(addPosition())，如果这只票已经有评分缓存(比如之前扫过、或
+     本来就在持仓/自选池里)，立即捕获，最准确。
+   - 更常见的情况是：新代码刚输入，还没有评分/止损引擎数据(免费数据源需要单独
+     点"重新计算"才会去拉)——这时候没法拍一张"入场那一刻"的照片，只能标记
+     entrySnapshotPending=true，等下一次recalcStockScores()算完这只票的分数后
+     再补录。补录的快照严格说不是"买入那一刻"的真实状态，而是"买入后第一次算出
+     分数时"的状态，两者之间可能隔了几天甚至更久——entrySnapshotDelayDays如实
+     记录这个延迟天数，不假装是精确的入场快照。
+   ================================================================ */
+function buildEntryAttributionSnapshot(ticker){
+  return buildExitAttributionSnapshot(ticker); // 字段定义完全一致，直接复用同一份读取逻辑
+}
 // 汇总赢/亏两组交易在出场快照各维度上的均值/分布，回答"为什么赚钱/为什么亏钱"。
 // 只统计带exitSnapshot字段的记录（V1.5之后平仓的交易），V1.5之前的历史记录
 // 没有这个字段，如实排除在外，不做插值/假设。
@@ -7793,14 +8030,32 @@ function computeTradeAttribution(){
     arr.forEach(t=>{ const v = t.exitSnapshot[key]; if(v) counts[v]=(counts[v]||0)+1; });
     return counts;
   };
+  // V1.6: 入场维度——只统计同时带entrySnapshot的交易(比exitSnapshot覆盖率低很多，
+  // 因为entrySnapshot是V1.6才开始记录，且需要买入后成功算过一次分才会补录，
+  // 早期样本量会很小，如实用entryN标注覆盖数，不拿缺入场快照的交易凑数)。
+  const avgOfEntry = (arr, key) => {
+    const vals = arr.filter(t=>t.entrySnapshot).map(t=>t.entrySnapshot[key]).filter(v=>v!=null);
+    return vals.length ? vals.reduce((s,v)=>s+v,0)/vals.length : null;
+  };
+  // 评分变化(出场-入场)：只在同一笔交易上同时有entry和exit的composite时才计入，
+  // 不是"出场均值-入场均值"这种跨样本相减（那样会被样本构成不同污染，误导性更大）。
+  const avgCompositeDelta = (arr) => {
+    const deltas = arr.filter(t=>t.entrySnapshot && t.exitSnapshot && t.entrySnapshot.composite!=null && t.exitSnapshot.composite!=null)
+      .map(t=>t.exitSnapshot.composite - t.entrySnapshot.composite);
+    return deltas.length ? deltas.reduce((s,v)=>s+v,0)/deltas.length : null;
+  };
   const groupStats = (arr) => ({
     count: arr.length,
+    entryN: arr.filter(t=>t.entrySnapshot).length,
     avgComposite: avgOf(arr,'composite'), avgTrend: avgOf(arr,'trendScore'), avgMomentum: avgOf(arr,'momentumScore'),
     avgPortfolioHealth: avgOf(arr,'portfolioHealth'),
+    avgEntryComposite: avgOfEntry(arr,'composite'), avgEntryMomentum: avgOfEntry(arr,'momentumScore'),
+    avgCompositeDelta: avgCompositeDelta(arr),
     hardStopBreachedPct: arr.length ? arr.filter(t=>t.exitSnapshot.hardStopBreached===true).length/arr.length*100 : null,
     regimeDist: distOf(arr,'marketRegime'), weeklyDist: distOf(arr,'weeklyVerdict')
   });
-  return { totalWithSnapshot: withSnapshot.length, totalAll: closedTrades.length, wins: groupStats(wins), losses: groupStats(losses) };
+  const totalWithEntry = closedTrades.filter(t=>t.entrySnapshot).length;
+  return { totalWithSnapshot: withSnapshot.length, totalWithEntry, totalAll: closedTrades.length, wins: groupStats(wins), losses: groupStats(losses) };
 }
 function renderTradeAttribution(){
   const el = document.getElementById('tradeAttributionPanel');
@@ -7824,17 +8079,21 @@ function renderTradeAttribution(){
       <span style="color:var(--red);">${fmtFn(l)}</span>
     </div>`;
   el.innerHTML = `
-    <div class="hint" style="margin-bottom:8px;">共${attr.totalAll}笔平仓记录，其中${attr.totalWithSnapshot}笔带出场归因快照（V1.5之后平仓的交易）；下面按盈利/亏损分组对比出场当下的上下文均值，不代表因果关系，仅供复盘参考。</div>
+    <div class="hint" style="margin-bottom:8px;">共${attr.totalAll}笔平仓记录，其中${attr.totalWithSnapshot}笔带出场归因快照（V1.5之后平仓的交易），${attr.totalWithEntry}笔带入场归因快照（V1.6之后建仓、且建仓后成功算过分的交易，样本量早期会比出场快照少很多）；下面按盈利/亏损分组对比上下文均值，不代表因果关系，仅供复盘参考。</div>
     <div style="display:grid;grid-template-columns:140px 1fr 1fr;gap:10px;padding-bottom:6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);font-weight:600;">
       <span></span><span>🟢 盈利交易(${attr.wins.count}笔)</span><span>🔴 亏损交易(${attr.losses.count}笔)</span>
     </div>
-    ${row('平均综合评分', attr.wins, attr.losses, g=>g.avgComposite!=null?g.avgComposite.toFixed(1):'—')}
-    ${row('平均趋势分', attr.wins, attr.losses, g=>g.avgTrend!=null?g.avgTrend.toFixed(1):'—')}
-    ${row('平均动量分', attr.wins, attr.losses, g=>g.avgMomentum!=null?g.avgMomentum.toFixed(1):'—')}
-    ${row('平均组合健康分', attr.wins, attr.losses, g=>g.avgPortfolioHealth!=null?g.avgPortfolioHealth.toFixed(1):'—')}
+    ${row('平均综合评分(出场)', attr.wins, attr.losses, g=>g.avgComposite!=null?g.avgComposite.toFixed(1):'—')}
+    ${row('平均趋势分(出场)', attr.wins, attr.losses, g=>g.avgTrend!=null?g.avgTrend.toFixed(1):'—')}
+    ${row('平均动量分(出场)', attr.wins, attr.losses, g=>g.avgMomentum!=null?g.avgMomentum.toFixed(1):'—')}
+    ${row('平均组合健康分(出场)', attr.wins, attr.losses, g=>g.avgPortfolioHealth!=null?g.avgPortfolioHealth.toFixed(1):'—')}
     ${row('出场时硬止损已破%', attr.wins, attr.losses, g=>g.hardStopBreachedPct!=null?g.hardStopBreachedPct.toFixed(0)+'%':'—')}
     ${row('大盘环境分布', attr.wins, attr.losses, g=>fmtDist(g.regimeDist, regimeLabel))}
     ${row('周线大局分布', attr.wins, attr.losses, g=>fmtDist(g.weeklyDist, weeklyLabel))}
+    <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:11px;color:var(--muted);font-weight:600;">V1.6新增：入场快照对比（样本：${attr.wins.entryN}胜 / ${attr.losses.entryN}负，都带入场快照）</div>
+    ${row('平均综合评分(入场)', attr.wins, attr.losses, g=>g.avgEntryComposite!=null?g.avgEntryComposite.toFixed(1):'—')}
+    ${row('平均动量分(入场)', attr.wins, attr.losses, g=>g.avgEntryMomentum!=null?g.avgEntryMomentum.toFixed(1):'—')}
+    ${row('评分变化(出场-入场)', attr.wins, attr.losses, g=>g.avgCompositeDelta!=null?(g.avgCompositeDelta>=0?'+':'')+g.avgCompositeDelta.toFixed(1):'—')}
   `;
 }
 function confirmClosePosition(){
@@ -7899,7 +8158,11 @@ function confirmClosePosition(){
     // V1.5: 出场归因快照——见buildExitAttributionSnapshot()，只读已有缓存，
     // 不重新计算。V1.5之前平仓的历史记录没有这个字段，归因统计会如实标注
     // "仅N笔有归因数据"，不会拿新字段缺失的旧记录去凑数/插值。
-    exitSnapshot: buildExitAttributionSnapshot(p.ticker)
+    exitSnapshot: buildExitAttributionSnapshot(p.ticker),
+    // V1.6: 入场快照——直接把这笔lot上已经存的entrySnapshot(建仓时或后续补录的)
+    // 原样带过来；如果一直是pending状态(比如这只票从没成功评分过)，entrySnapshot
+    // 会是null，如实反映"没有入场快照"，不伪造。
+    entrySnapshot: p.entrySnapshot || null
   });
   saveClosedTrades();
 
@@ -12455,7 +12718,9 @@ function renderWatchlist(){
     <table style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
-          <th class="sticky-col">代码</th><th>现价</th><th>目标价</th><th>距目标</th><th>备注</th><th>添加时间</th><th></th>
+          <th class="sticky-col">代码</th><th>现价</th><th>目标价</th><th>距目标</th>
+          <th>建议仓位(风险预算法)</th><th>建议仓位(波动率目标法)</th>
+          <th>备注</th><th>添加时间</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -12468,12 +12733,23 @@ function renderWatchlist(){
             distance = (price - w.targetPrice) / w.targetPrice * 100;
             hit = price <= w.targetPrice;
           }
+          // V1.6: 仓位建议引擎——watchlist代码只要在"个股智能"重新计算时被顺带算过分
+          // (V1.5⑨已经把自选池代码纳入recalcStockScores)，这里就能给出建议，不需要
+          // 额外的数据获取。数据不够时如实显示"—"+原因，不是空着不说明。
+          const sz = computeSuggestedPositionSize(w.ticker);
+          const szCell = (method) => {
+            if(sz.insufficient) return `<span class="neu" title="${escapeHtml(sz.reason)}">—</span>`;
+            const m = method==='A' ? sz.methodA : sz.methodB;
+            return m ? `${m.shares}股<br><span class="lang-en" style="font-size:10px;color:var(--muted);">≈${fmt$(m.dollarValue)}(${m.pctOfEquity.toFixed(1)}%)</span>` : '<span class="neu">不可用</span>';
+          };
           return `
             <tr>
               <td class="ticker sticky-col">${w.ticker}</td>
               <td>${price!=null?fmt$(price):'<span class="neu">—</span>'}</td>
               <td>${hasTarget?fmt$(w.targetPrice):'<span class="neu">仅监控</span>'}</td>
               <td>${distance!=null?`<span class="${hit?'pos':'neu'}">${distance>=0?'+':''}${distance.toFixed(1)}%</span>${hit?' <span class="badge-alert" style="background:rgba(34,197,94,0.15);color:var(--green);">🎯 已达标</span>':''}`:'—'}</td>
+              <td style="font-size:12px;">${szCell('A')}</td>
+              <td style="font-size:12px;">${szCell('B')}</td>
               <td class="lang-en" style="font-family:var(--sans);">${escapeHtml(w.note||'')}</td>
               <td class="lang-en" style="color:var(--muted);font-size:11px;">${new Date(w.addedAt).toLocaleDateString('zh-CN')}</td>
               <td class="row-actions">
@@ -12482,9 +12758,10 @@ function renderWatchlist(){
               </td>
             </tr>
           `;
-        }).join('') || `<tr><td colspan="7" class="lang-en" style="padding:12px;color:var(--muted);">未找到匹配"${wSearchQ}"的观察标的</td></tr>`}
+        }).join('') || `<tr><td colspan="9" class="lang-en" style="padding:12px;color:var(--muted);">未找到匹配"${wSearchQ}"的观察标的</td></tr>`}
       </tbody>
     </table>
+    <div class="hint" style="margin-top:8px;">建议仓位需要该代码已经在"个股智能"页签算过分(自选池代码点"重新计算"时会一并算)，且已刷新过现价；两种方法看的风险维度不同，经常给出不同股数，不做"选一个"的简化，参数可在设置里调整。</div>
   `;
 }
 
