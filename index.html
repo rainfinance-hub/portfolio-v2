@@ -1326,6 +1326,15 @@
       <label>备注 Note</label>
       <input id="editTradeNote" type="text">
     </div>
+    <!-- fix4: 平仓记录本来只有备注，没有标签输入框——V1.6fix1起平仓时会自动带走
+         当时持仓的标签，但fix1之前就已经平仓的老记录、或者当时持仓本来就没打
+         标签的记录，历史交易页签就永远不会有🏷标签Tags可筛选。这里补一个和
+         "添加持仓"表单里的标签输入(#inpTags)同样的逗号分隔文本框+建议列表，
+         让老记录也能补打标签。 -->
+    <div style="margin-top:8px;">
+      <label>🏷 标签 Tags</label>
+      <input id="editTradeTags" type="text" placeholder="Schwab, IRA, 科技" list="tagSuggestionList">
+    </div>
     <div class="modal-footer">
       <button class="ghost" onclick="closeEditClosedTradeModal()">取消</button>
       <button class="primary" onclick="saveEditClosedTrade()">保存 / Save</button>
@@ -8210,6 +8219,7 @@ function editClosedTrade(closedAt){
   document.getElementById('editTradeCommission').value = t.commission || 0;
   document.getElementById('editTradePartial').checked = !!t.partial;
   document.getElementById('editTradeNote').value = t.note || '';
+  document.getElementById('editTradeTags').value = (t.tags||[]).join(', ');
   document.getElementById('editTradeModal').classList.add('show');
 }
 function closeEditClosedTradeModal(){
@@ -8237,6 +8247,8 @@ function saveEditClosedTrade(){
   t.commission = commission;
   t.partial = document.getElementById('editTradePartial').checked;
   t.note = document.getElementById('editTradeNote').value || '';
+  const editTagsRaw = document.getElementById('editTradeTags').value.trim();
+  t.tags = editTagsRaw ? editTagsRaw.split(',').map(x=>x.trim()).filter(Boolean) : [];
   // recompute realized P/L, %, and holding days from the edited fields
   t.realizedPL = (sellPrice - cost) * qty - commission;
   t.realizedPLPct = cost>0 ? ((sellPrice - cost)/cost*100) : 0;
