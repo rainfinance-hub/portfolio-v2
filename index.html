@@ -1007,6 +1007,8 @@
         </div>
       </div>
       <p class="lang-en" id="closedTradesSummary" style="margin:0 0 12px 0;"></p>
+      <!-- Filter / Tag bar (V1.6fix2, mirrors Positions tab's #tagFilterBar) -->
+      <div id="historyFilterBar" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;align-items:center;padding:2px 0;"></div>
       <div style="overflow-x:auto;">
         <table style="width:100%;">
           <thead>
@@ -8149,6 +8151,9 @@ function confirmClosePosition(){
     ticker: p.ticker, qty: sellQty, cost: p.cost, sellPrice, buyDate: p.buyDate||null, sellDate,
     realizedPL, realizedPLPct, holdDays, note: p.note||'', closedAt: Date.now(),
     partial: isPartial, commission,
+    // fix1: 平仓时把这笔lot的标签也带过来，供"历史交易"页签的搜索框按标签查找。
+    // 历史上V1.6之前平仓的记录没有这个字段，搜索时如实当作空标签处理，不回填。
+    tags: cloneSafe(p.tags) || [],
     tpStage: pendingTpStage || null, // V1.1: 'tp1' | 'tp2' | null(手动平仓，非分批止盈计划触发)
     initialRisk: p.initialRisk ?? null,
     initialRiskAuditLog: cloneSafe(p.initialRiskAuditLog) || [],
@@ -8260,6 +8265,8 @@ function renderClosedTrades(){
   const container = document.getElementById('closedTradesBody');
   if(!container) return;
 
+  renderHistoryFilterBar();
+
   // update sort arrows
   ['ticker','qty','cost','sellPrice','realizedPL','realizedPLPct','holdDays','sellDate'].forEach(c=>{
     const el = document.getElementById('hsort_'+c);
@@ -8275,18 +8282,35 @@ function renderClosedTrades(){
   const sumEl = document.getElementById('closedTradesSummary');
   if(sumEl) sumEl.textContent = `累计已实现盈亏(净): ${fmt$(totalRealized)} · 共${closedTrades.length}笔` + (totalCommission>0 ? ` · 累计佣金: ${fmt$(totalCommission)}` : '');
 
-  const sorted0 = [...closedTrades].sort((a,b)=>{
+  let sorted0 = [...closedTrades].sort((a,b)=>{
     const col = historySort.col, dir = historySort.dir==='asc'?1:-1;
     const va = a[col]??'', vb = b[col]??'';
     if(typeof va==='number') return (va-vb)*dir;
     return String(va).localeCompare(String(vb))*dir;
   });
+  // fix2: 标签/备注筛选栏(activeHistoryFilters)，和下面的文字搜索框(searchQ)
+  // 是两套独立的筛选条件，堆叠生效(先按筛选栏的chip过滤，再在结果里做文字
+  // 搜索)——和Positions标签页getSortedFilteredGroups()里activeFilters
+  // 先筛、tickerSearchQuery再筛的堆叠顺序保持一致。
+  if(activeHistoryFilters.length>0){
+    sorted0 = sorted0.filter(t=>activeHistoryFilters.some(f=>{
+      if(f.startsWith('__note__')) return t.note === f.replace('__note__','');
+      return (t.tags||[]).includes(f);
+    }));
+  }
   const searchQ = panelSearchQuery.history;
-  const sorted = searchQ ? sorted0.filter(t=>t.ticker.toUpperCase().includes(searchQ)) : sorted0;
+  // fix1: 搜索范围从只匹配代码扩大到代码+备注+标签。标签是V1.6fix1才开始在平仓时
+  // 保存的(见confirmClosePosition)，V1.6之前的历史记录没有tags字段，这里用
+  // t.tags||[]兜底成空数组，不会因为字段缺失报错，也不会误匹配。
+  const sorted = searchQ ? sorted0.filter(t=>
+    t.ticker.toUpperCase().includes(searchQ) ||
+    (t.note && t.note.toUpperCase().includes(searchQ)) ||
+    (t.tags||[]).some(tag=>tag.toUpperCase().includes(searchQ))
+  ) : sorted0;
 
   container.innerHTML = sorted.map(t=>`
     <tr>
-      <td class="sticky-col"><span class="ticker">${t.ticker}</span>${t.tpStage?`<span class="hint" style="color:var(--accent);"> ${t.tpStage==='tp1'?'TP1止盈':'TP2止盈'}</span>`:(t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':'')}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}</td>
+      <td class="sticky-col"><span class="ticker">${t.ticker}</span>${t.tpStage?`<span class="hint" style="color:var(--accent);"> ${t.tpStage==='tp1'?'TP1止盈':'TP2止盈'}</span>`:(t.partial?' <span class="hint" style="color:var(--amber);">部分</span>':'')}${t.note?`<div class="ticker-note">${escapeHtml(t.note)}</div>`:''}${(t.tags&&t.tags.length)?`<div>${t.tags.map(tag=>`<span class="lot-tag">${escapeHtml(tag)}</span>`).join('')}</div>`:''}</td>
       <td>${t.qty}</td>
       <td>${fmt$(t.cost)}</td>
       <td>${fmt$(t.sellPrice)}</td>
@@ -8429,6 +8453,34 @@ async function refreshAll(silent=false){
   if(document.getElementById('tab-allocation').style.display==='block') renderAllocation();
   if(document.getElementById('tab-risk').style.display==='block'){ try{ renderRiskBudget(); }catch(e){} }
   if(document.getElementById('tab-portfolio').style.display==='block'){ try{ renderCapitalEfficiency(); }catch(e){} try{ renderCorrelationClusters(); }catch(e){} }
+
+  // fix1: 手动点主"刷新"按钮时，顺带把原本要分别去各自页签点按钮才会重算的几个分析
+  // 缓存——①个股评分/④止损引擎/风险指标/⑥大盘环境/相关性矩阵——也一起重算一遍，
+  // 不用来回切5个页签各点一次。**不包括**"一键计算全部止损/止盈"(autoCalcSLTP)——
+  // 那个会无条件覆盖每笔持仓手动调过的止损价/止盈价，属于会改动持仓数据的操作，
+  // 跟这里其余几个"只是重算只读分析缓存、不碰持仓数据"的性质不同，讨论后维持独立
+  // 手动按钮，避免刷新报价这种日常操作意外抹掉手动调整过的止损设置。
+  // 只在手动点击(silent=false)时做，不在后台自动刷新定时器(silent=true)时做——这几个
+  // 都是逐票顺序请求(每只票间隔至少300ms，哪怕命中当日缓存也要等这个间隔)，持仓多的
+  // 话叠加下来有明显耗时；定时器可能每几分钟触发一次，全部折进去会让后台自动刷新变得
+  // 很重、还会不必要地增加API调用频率，所以自动刷新定时器保持原来"只刷报价"的轻量
+  // 行为不变。任一环节失败都只记录日志，不中断后面的环节，避免比如相关性计算失败
+  // 就连报价都白刷了。
+  if(!silent){
+    showToast('正在重算个股评分/止损引擎/风险指标/大盘环境/相关性...');
+    try{ await recalcStockScores(); }catch(e){ console.warn('refreshAll: recalcStockScores 失败', e); }
+    try{ await computeStopEngine(); }catch(e){ console.warn('refreshAll: computeStopEngine 失败', e); }
+    try{ await computeRiskMetrics(); }catch(e){ console.warn('refreshAll: computeRiskMetrics 失败', e); }
+    try{ await computeMarketIntel(); }catch(e){ console.warn('refreshAll: computeMarketIntel 失败', e); }
+    if(tickers.length>=2){
+      try{ await computePortfolioCorrelation(); }catch(e){ console.warn('refreshAll: computePortfolioCorrelation 失败', e); }
+    }
+    // 浏览器通知授权：只在还没问过(default)的时候顺带弹一次，已经同意/拒绝过的不重复打扰
+    if(typeof Notification!=='undefined' && Notification.permission==='default'){
+      try{ requestNotificationPermission(); }catch(e){}
+    }
+  }
+
   if(!silent) showToast('刷新完成 / Refresh complete');
   updateAutoRefreshStatus();
   // check Discord alerts after every refresh
@@ -8750,6 +8802,26 @@ function allNotes(){
   return [...set].sort();
 }
 
+// fix2: 原本是renderTagFilterBar()内部的局部函数，History标签页新增筛选栏
+// (renderHistoryFilterBar())需要复用同一套HTML拼接逻辑，因此提升为顶层共享函数。
+// fix3: 三个分类(筛选/标签/备注)原来是各占一行的CSS grid(左边固定84px label+
+// 右边chips)，用户反馈希望"能排成一排"——现在改成同一个flex容器，各分类的
+// "小label + 该分类的chips"依次平铺，一个竖线分隔符隔开每个分类；空间够时
+// 三个分类真的会挤在同一物理行里，空间不够(标签/备注很多)时才作为一个整体
+// 自然换行，而不是像以前那样"标签"和"备注"哪怕各自只有一个chip也必定各占
+// 一整行。Positions(#tagFilterBar)和History(#historyFilterBar)两个筛选栏
+// 共用这一套拼接函数。
+function inlineFilterGroupHtml(label, chipsHtml){
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <span style="font-size:11px;color:var(--muted);white-space:nowrap;">${label}</span>${chipsHtml}
+  </span>`;
+}
+function joinInlineFilterGroups(groups){
+  // groups: array of {label, chipsHtml} already filtered to only the ones that should show
+  const divider = `<span style="width:1px;align-self:stretch;min-height:16px;background:var(--border);margin:0 2px;"></span>`;
+  return groups.map(g=>inlineFilterGroupHtml(g.label, g.chipsHtml)).join(divider);
+}
+
 function renderTagFilterBar(){
   const bar = document.getElementById('tagFilterBar');
   if(!bar) return;
@@ -8759,27 +8831,72 @@ function renderTagFilterBar(){
   const intentLabels = { hold:'🟢 持有', add:'📈 加仓', trim:'✂️ 减仓', watch:'👀 观望', exit:'🚫 清仓' };
   if(tags.length===0 && notes.length===0 && intentsInUse.length===0){ bar.style.display='none'; return; }
   bar.style.display='flex';
-  bar.style.flexDirection='column';
-  bar.style.gap='8px';
+  bar.style.flexDirection='row';
+  bar.style.flexWrap='wrap';
+  bar.style.rowGap='8px';
+  bar.style.columnGap='0';
 
-  function filterRow(label, chipsHtml){
-    return `
-      <div style="display:grid;grid-template-columns:84px 1fr;gap:12px;align-items:center;">
-        <span style="font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;">${label}</span>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">${chipsHtml}</div>
-      </div>
-    `;
-  }
-
-  const rows = [];
-  rows.push(filterRow('筛选 Filter', `
+  const groups = [];
+  groups.push({ label:'筛选 Filter', chipsHtml:`
     <span class="tag-chip ${activeFilters.length===0?'active':''}" onclick="clearFilter()">全部</span>
     ${intentsInUse.map(intent=>`<span class="tag-chip ${activeFilters.includes('__intent__'+intent)?'active':''}" onclick="toggleFilter('__intent__${intent}')">${intentLabels[intent]||intent}</span>`).join('')}
-  `));
-  if(tags.length>0) rows.push(filterRow('🏷 标签 Tags', tags.map(t=>`<span class="tag-chip ${activeFilters.includes(t)?'active':''}" onclick="toggleFilter('${escapeHtml(t)}')">${escapeHtml(t)}</span>`).join('')));
-  if(notes.length>0) rows.push(filterRow('📝 备注 Note', notes.map(n=>`<span class="tag-chip ${activeFilters.includes('__note__'+n)?'active':''}" onclick="toggleFilter('__note__${escapeHtml(n)}')">${escapeHtml(n)}</span>`).join('')));
+  `});
+  if(tags.length>0) groups.push({ label:'🏷 标签 Tags', chipsHtml: tags.map(t=>`<span class="tag-chip ${activeFilters.includes(t)?'active':''}" onclick="toggleFilter('${escapeHtml(t)}')">${escapeHtml(t)}</span>`).join('') });
+  if(notes.length>0) groups.push({ label:'📝 备注 Note', chipsHtml: notes.map(n=>`<span class="tag-chip ${activeFilters.includes('__note__'+n)?'active':''}" onclick="toggleFilter('__note__${escapeHtml(n)}')">${escapeHtml(n)}</span>`).join('') });
 
-  bar.innerHTML = rows.join('');
+  bar.innerHTML = joinInlineFilterGroups(groups);
+}
+
+/* ============== HISTORY TAB: TAG/NOTE FILTER BAR (V1.6fix2) ==============
+   镜像上面Positions标签页的筛选栏实现(activeFilters/renderTagFilterBar)，
+   但独立维护一套状态(activeHistoryFilters)和数据源(closedTrades而不是
+   positions)——历史成交记录和当前持仓是两个不同的数组，标签/备注集合也
+   会不一样(比如已清仓很久的标的，标签可能在当前持仓里已经不存在了)，
+   所以不能直接复用allTags()/allNotes()/activeFilters，但筛选栏的HTML
+   结构(filterBarRowHtml)和交互模式(点chip切换/点"全部"清空)完全复用。
+   历史记录没有"意图 intent"这个字段(intent是当前持仓的实时状态，对已
+   平仓的记录没有意义)，所以这里没有"筛选 Filter"意图行，只有标签+备注。 */
+let activeHistoryFilters = [];
+
+function clearHistoryFilter(){
+  activeHistoryFilters = [];
+  renderClosedTrades();
+}
+function toggleHistoryFilter(tag){
+  if(activeHistoryFilters.includes(tag)) activeHistoryFilters = activeHistoryFilters.filter(t=>t!==tag);
+  else activeHistoryFilters.push(tag);
+  renderClosedTrades();
+}
+function allHistoryTags(){
+  const set = new Set();
+  closedTrades.forEach(t=>{ (t.tags||[]).forEach(tag=>set.add(tag)); });
+  return [...set].sort();
+}
+function allHistoryNotes(){
+  const set = new Set();
+  closedTrades.forEach(t=>{ if(t.note) set.add(t.note); });
+  return [...set].sort();
+}
+function renderHistoryFilterBar(){
+  const bar = document.getElementById('historyFilterBar');
+  if(!bar) return;
+  const tags = allHistoryTags();
+  const notes = allHistoryNotes();
+  if(tags.length===0 && notes.length===0){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  bar.style.flexDirection='row';
+  bar.style.flexWrap='wrap';
+  bar.style.rowGap='8px';
+  bar.style.columnGap='0';
+
+  const groups = [];
+  groups.push({ label:'筛选 Filter', chipsHtml:`
+    <span class="tag-chip ${activeHistoryFilters.length===0?'active':''}" onclick="clearHistoryFilter()">全部</span>
+  `});
+  if(tags.length>0) groups.push({ label:'🏷 标签 Tags', chipsHtml: tags.map(t=>`<span class="tag-chip ${activeHistoryFilters.includes(t)?'active':''}" onclick="toggleHistoryFilter('${escapeHtml(t)}')">${escapeHtml(t)}</span>`).join('') });
+  if(notes.length>0) groups.push({ label:'📝 备注 Note', chipsHtml: notes.map(n=>`<span class="tag-chip ${activeHistoryFilters.includes('__note__'+n)?'active':''}" onclick="toggleHistoryFilter('__note__${escapeHtml(n)}')">${escapeHtml(n)}</span>`).join('') });
+
+  bar.innerHTML = joinInlineFilterGroups(groups);
 }
 
 function updateSortArrows(){
@@ -10352,14 +10469,21 @@ const PANEL_REFRESH_FN = {
   watchlist:   renderWatchlist,
 };
 
+// fix1: "历史交易"页签的搜索实际匹配范围已经从只匹配代码扩大到代码+备注+标签
+// (见renderClosedTrades)，placeholder跟着改，避免文字承诺的和实际搜索范围对不上。
+// 其余页签(风险/资产配置/预警/持仓分析/股息/财报/观察名单)目前仍然只按代码搜，
+// 维持原来的placeholder。
+const PANEL_SEARCH_PLACEHOLDER = { history: '搜索代码，备注，标签' };
 function quickSearchWidget(suffix){
   const inputId = `qsInput_${suffix}`;
   const clearId = `qsClear_${suffix}`;
+  const placeholder = PANEL_SEARCH_PLACEHOLDER[suffix] || '搜索代码...';
+  const width = PANEL_SEARCH_PLACEHOLDER[suffix] ? 150 : 110; // 更长的placeholder给更宽的输入框，避免文字被截断
   return `
     <span style="position:relative;display:inline-flex;align-items:center;">
       <span style="position:absolute;left:8px;color:var(--muted);font-size:11px;pointer-events:none;">🔍</span>
-      <input id="${inputId}" placeholder="搜索代码..."
-        style="width:110px;padding:5px 22px 5px 24px;font-size:12px;"
+      <input id="${inputId}" placeholder="${placeholder}"
+        style="width:${width}px;padding:5px 22px 5px 24px;font-size:12px;"
         oninput="onPanelSearch('${suffix}', this.value)">
       <button onclick="clearPanelSearch('${suffix}')" id="${clearId}"
         style="display:none;position:absolute;right:5px;background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:2px 4px;">✕</button>
